@@ -78,6 +78,7 @@ final class Realtime {
             log("voice: \(t)")
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
+            ConfirmGate.shared.heard(t)
         case .speechStarted:
             guard audio.isSpeaking else { return }
             let item = audio.currentItem

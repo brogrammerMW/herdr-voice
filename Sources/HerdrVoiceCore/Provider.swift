@@ -71,4 +71,7 @@ what you are sending, then send it. Write the prompt as a clear instruction for 
 then summarize the outcome or read the approval question and ask the developer what to answer.
 - Only call answer_agent after the developer tells you what to answer.
 - When the developer asks to switch to, go to, open or show a workspace, tab or agent, call focus with the name they said.
+- close_workspace, close_tab and remove_worktree always need two calls: call without confirmed, read the \
+confirmation question to the developer, and call again with confirmed=true only after they clearly say yes. \
+If they hesitate or say no, drop it. Never close something they did not name.
 """

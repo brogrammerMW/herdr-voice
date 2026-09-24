@@ -19,6 +19,9 @@ public enum HerdrTools {
            ["target", "key"]),
         fn("focus", "Bring a workspace (space), tab or agent pane into view in Herdr, e.g. \"switch to forge\" or \"show me claude-2\".",
            ["target": str("Workspace, tab or agent name or ID as the developer said it")], ["target"]),
+        closeSchema("close_workspace", "Close a Herdr workspace (space) and every pane in it, stopping its agents."),
+        closeSchema("close_tab", "Close a Herdr tab and every pane in it, stopping its agents."),
+        closeSchema("remove_worktree", "Remove a git worktree checkout that is open as a Herdr workspace; deletes the checkout directory. Refuses if it has uncommitted changes."),
     ]
 
     public typealias Runner = ([String]) -> String
@@ -43,7 +46,7 @@ public enum HerdrTools {
         public let watch: String?
     }
 
-    public static func call(_ name: String, arguments: String, run: Runner = herdr) -> Outcome {
+    public static func call(_ name: String, arguments: String, run: Runner = herdr, gate: ConfirmGate = .shared) -> Outcome {
         let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any]) ?? [:]
         let target = args["target"] as? String ?? ""
         switch name {
@@ -66,6 +69,8 @@ public enum HerdrTools {
             return Outcome(output: run(["agent", "send-keys", target, key]), watch: target)
         case "focus":
             return Outcome(output: focus(target, run), watch: nil)
+        case "close_workspace", "close_tab", "remove_worktree":
+            return Outcome(output: close(name, target, confirmed: args["confirmed"] as? Bool ?? false, run, gate), watch: nil)
         default:
             return Outcome(output: "error: unknown tool \(name)", watch: nil)
         }
@@ -105,9 +110,9 @@ public enum HerdrTools {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func str(_ d: String) -> [String: Any] { ["type": "string", "description": d] }
+    static func str(_ d: String) -> [String: Any] { ["type": "string", "description": d] }
 
-    private static func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
+    static func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
         ["type": "function", "name": name, "description": desc,
          "parameters": ["type": "object", "properties": props, "required": req] as [String: Any]]
     }
@@ -119,6 +124,8 @@ public enum HerdrTools {
         public let kind: Kind
         public let id: String
         public let label: String
+        /// Spoken context for confirmations, e.g. "3 panes, agents working".
+        public var detail = ""
     }
 
     /// Resolves a spoken name and focuses it; ambiguity is returned to the model instead of guessing.
@@ -158,9 +165,8 @@ public enum HerdrTools {
     }
 
     public static func focusTargets(agents: String, workspaces: String, tabs: String) -> [FocusTarget] {
-        func rows(_ json: String, _ key: String) -> [[String: Any]] {
-            let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-            return (obj?["result"] as? [String: Any])?[key] as? [[String: Any]] ?? []
+        func detail(_ r: [String: Any]) -> String {
+            "\(r["pane_count"] as? Int ?? 0) panes, agents \(r["agent_status"] as? String ?? "none")"
         }
         let a = rows(agents, "agents").compactMap { r -> FocusTarget? in
             guard let id = (r["name"] ?? r["pane_id"]) as? String else { return nil }
@@ -168,12 +174,18 @@ public enum HerdrTools {
         }
         let w = rows(workspaces, "workspaces").compactMap { r -> FocusTarget? in
             guard let id = r["workspace_id"] as? String else { return nil }
-            return FocusTarget(kind: .workspace, id: id, label: r["label"] as? String ?? id)
+            return FocusTarget(kind: .workspace, id: id, label: r["label"] as? String ?? id, detail: detail(r))
         }
         let t = rows(tabs, "tabs").compactMap { r -> FocusTarget? in
             guard let id = r["tab_id"] as? String else { return nil }
-            return FocusTarget(kind: .tab, id: id, label: r["label"] as? String ?? id)
+            return FocusTarget(kind: .tab, id: id, label: r["label"] as? String ?? id, detail: detail(r))
         }
         return a + w + t
+    }
+
+    /// `result.<key>` rows of a herdr list response.
+    static func rows(_ json: String, _ key: String) -> [[String: Any]] {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        return (obj?["result"] as? [String: Any])?[key] as? [[String: Any]] ?? []
     }
 }
