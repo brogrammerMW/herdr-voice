@@ -33,6 +33,9 @@ public final class ConfirmGate {
         self.clock = clock
     }
 
+    /// The action waiting for the developer's answer, if any.
+    public var pendingAction: String? { lock.withLock { pending?.action } }
+
     /// Arms `action`. Returns the question already waiting if a different action is still pending,
     /// so one "yes" can never be redirected to a newer request.
     func request(_ action: String, question: String) -> String? {

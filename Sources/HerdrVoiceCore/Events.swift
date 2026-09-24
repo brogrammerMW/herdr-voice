@@ -4,6 +4,7 @@ import Foundation
 public enum ServerEvent: Equatable {
     case audioDelta(itemID: String, base64: String)
     case assistantTranscript(String)
+    case assistantTranscriptDelta(String)
     case userTranscript(String)
     case speechStarted
     case responseCreated
@@ -22,6 +23,8 @@ public enum ServerEvent: Equatable {
         // OpenAI GA and xAI names first, older beta names after.
         case "response.output_audio.delta", "response.audio.delta":
             return .audioDelta(itemID: obj["item_id"] as? String ?? "", base64: obj["delta"] as? String ?? "")
+        case "response.output_audio_transcript.delta", "response.audio_transcript.delta":
+            return .assistantTranscriptDelta(obj["delta"] as? String ?? "")
         case "response.output_audio_transcript.done", "response.audio_transcript.done":
             return .assistantTranscript(obj["transcript"] as? String ?? "")
         case "conversation.item.input_audio_transcription.completed":
