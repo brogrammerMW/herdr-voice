@@ -43,6 +43,9 @@ final class Audio {
     /// Bumped on interrupt so callbacks from flushed buffers are ignored.
     private var generation = 0
     private(set) var currentItem = ""
+    /// Called on main when playback starts or stops, so Esc can be grabbed and released on the transition
+    /// instead of being polled every frame.
+    var onSpeakingChanged: ((Bool) -> Void)?
 
     func start() throws {
         // Voice processing fails with -10875 unless the output side exists first.
@@ -142,11 +145,13 @@ final class Audio {
             for i in 0..<frames { dst[i] = Float(Int16(littleEndian: s[i])) / 32768 }
         }
         pendingBuffers += 1
+        if pendingBuffers == 1 { onSpeakingChanged?(true) }
         let gen = generation
         player.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self, gen == self.generation else { return }
                 self.pendingBuffers -= 1
+                if self.pendingBuffers == 0 { self.onSpeakingChanged?(false) }
                 if item == self.currentItem { self.itemPlayedSamples += Int64(frames) }
             }
         }
@@ -160,7 +165,9 @@ final class Audio {
         // Granularity is one server chunk (tens of ms), plenty for truncation.
         let heardMs = Int(itemPlayedSamples * 1000 / Int64(Audio.rate))
         generation += 1
+        let wasSpeaking = pendingBuffers > 0
         pendingBuffers = 0
+        if wasSpeaking { onSpeakingChanged?(false) }
         itemPlayedSamples = 0
         player.stop()
         player.play()
