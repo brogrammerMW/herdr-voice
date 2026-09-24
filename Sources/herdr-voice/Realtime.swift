@@ -135,6 +135,9 @@ final class Realtime {
 
     private func runTool(callID: String, name: String, args: String) {
         log("→ \(name) \(args)")
+        if name == "run_shell", let cmd = Self.field(args, "command") {
+            log("   $ \(cmd)")   // the exact command the developer is being asked to approve
+        }
         // Speech start comes from the mic via server VAD, so an injected report can't fake it.
         let userInitiated = lastSpeechStart > lastReport
         DispatchQueue.global().async {
@@ -164,6 +167,10 @@ final class Realtime {
                 self.sendRaw(["type": "response.create"])
             }
         }
+    }
+
+    private static func field(_ json: String, _ key: String) -> String? {
+        (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?[key] as? String
     }
 
     private func sendRaw(_ obj: [String: Any]) {

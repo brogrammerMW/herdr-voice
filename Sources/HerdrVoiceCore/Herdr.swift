@@ -9,7 +9,10 @@ public enum HerdrTools {
     static let confirmedField: [String: Any] =
         ["type": "boolean", "description": "true only on the second call, after the developer said yes"]
 
-    public static let schemas: [[String: Any]] = [
+    /// Tools offered to the voice model. `run_shell` is only offered when HERDR_VOICE_SHELL=1.
+    public static var schemas: [[String: Any]] { herdrSchemas + (shellEnabled ? [shellSchema] : []) }
+
+    static let herdrSchemas: [[String: Any]] = [
         fn("list_agents", "List coding agents running in Herdr panes with name, status, cwd and title.", [:], []),
         fn("prompt_agent", "Send an instruction to a coding agent. Returns once the agent starts working. "
            + "If it answers CONFIRMATION REQUIRED, ask the developer and call again with confirmed=true after they say yes.",
@@ -89,6 +92,10 @@ public enum HerdrTools {
             return Outcome(output: run(["agent", "send-keys", target, key]), watch: target)
         case "focus":
             return Outcome(output: focus(target, run), watch: nil)
+        case "run_shell":
+            guard shellEnabled else { return Outcome(output: "error: run_shell is disabled (set HERDR_VOICE_SHELL=1)", watch: nil) }
+            return Outcome(output: runShell(args["command"] as? String ?? "", cwd: args["cwd"] as? String,
+                                            confirmed: confirmed, gate), watch: nil)
         case "close_workspace", "close_tab", "remove_worktree":
             return Outcome(output: close(name, target, confirmed: args["confirmed"] as? Bool ?? false, run, gate), watch: nil)
         default:
