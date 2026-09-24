@@ -127,7 +127,8 @@ thing, the voice asks which one you mean instead of guessing.
 `Esc` is only captured while the assistant is actually speaking, so every other app keeps its `Esc` the rest of the
 time. A longer sentence that happens to contain "stop" ("stop the dev server") is treated as a request, not an
 interrupt. While muted, no mic audio is sent, but you still hear the voice, so muting is a good way to listen to a
-summary without being interrupted.
+summary without being interrupted. Muting also bypasses the echo canceller, which more than halves herdr-voice's CPU
+use while muted.
 
 ### Where the orb shows
 
@@ -173,6 +174,7 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
+| `HERDR_VOICE_ECHO_CANCEL` | on | `0` turns off macOS voice processing (echo cancellation and noise suppression). Use it with headphones: it cuts herdr-voice's CPU use by about 11 points |
 
 ### Shell commands (`run_shell`, opt-in)
 
@@ -300,7 +302,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 47 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 51 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -321,7 +323,7 @@ Sources/
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
     Audio.swift          # echo-cancelled mic capture and playback
     Orb.swift            # floating orb
-    WindowTracker.swift  # finds the Herdr window (process tree, window list) ten times a second
+    WindowTracker.swift  # finds the Herdr window on a background queue; queries windows only while the terminal is in front
     Hotkey.swift         # global hotkeys (⌥⌘M, Esc while speaking)
 Tests/HerdrVoiceTests/
 ```
@@ -335,4 +337,5 @@ Tests/HerdrVoiceTests/
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
 | `✖ disconnected` / red orb | Network or auth problem. Check the key, then press `⌥⌘M` to reconnect |
 | `⚠ not inside a Herdr pane` | Start it from a Herdr pane so it controls the right session |
-| The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud |
+| The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud (and make sure `HERDR_VOICE_ECHO_CANCEL` isn't `0`) |
+| herdr-voice uses more CPU than you'd like | Most of it is macOS voice processing (about 12% of a core). With headphones, set `HERDR_VOICE_ECHO_CANCEL=0` (about 1% instead); otherwise mute when you aren't talking (about 5%) |

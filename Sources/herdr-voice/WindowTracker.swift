@@ -3,27 +3,72 @@ import HerdrVoiceCore
 
 /// Finds the terminal window showing Herdr and reports where the orb should sit, using only APIs that need no
 /// extra permission (sysctl for the process tree, CGWindowList for window bounds and, when readable, titles).
+///
+/// Runs on its own utility queue so WindowServer round trips never stall the main thread's 60 fps orb animation,
+/// and does as little as possible per tick:
+/// - which app is in front comes from activation notifications, not polling;
+/// - when that app isn't the Herdr terminal, the orb hides without querying any windows (the common case);
+/// - otherwise only on-screen windows are listed (~57 here), and only the terminal's are decoded;
+/// - the full window list (~395 here, including every off-screen window) and the process scan run every 2 s.
 final class WindowTracker {
-    private var hosts = Set<Int32>()
-    /// The last app other than herdr-voice to be in front; herdr-voice itself never counts as "in front".
-    private var lastForeignFront: Int32?
-    private var lastRefresh = Date.distantPast
+    typealias Result = (hasHost: Bool, frame: CGRect?)
 
-    /// The Herdr window's frame in AppKit screen coordinates, or nil when the orb should be hidden.
-    /// `hasHost` is false when no terminal was found, so the caller can fall back to the screen corner.
-    func locate() -> (hasHost: Bool, frame: NSRect?) {
-        // Clients can attach or detach, so re-resolve the host apps every few seconds.
-        if Date().timeIntervalSince(lastRefresh) > 3 {
-            lastRefresh = Date()
+    private let queue = DispatchQueue(label: "herdr-voice.window-tracker", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var observer: NSObjectProtocol?
+
+    // Owned by `queue`.
+    private var hosts = Set<Int32>()
+    private var cachedHostWindows: [WindowPin.Window] = []
+    private var lastSlowRefresh = Date.distantPast
+    private var lastPublished: (Bool, CGRect?)?
+
+    /// Written on main by the activation observer, read on `queue`.
+    private let front = NSLock()
+    private var frontPID: Int32?
+
+    /// `onChange` runs on main, only when the result changes. The frame is in AppKit screen coordinates.
+    func start(onChange: @escaping (_ hasHost: Bool, _ frame: NSRect?) -> Void) {
+        // herdr-voice itself never counts as "in front" (it can be activated briefly at launch).
+        let own = getpid()
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, pid != own { setFront(pid) }
+        observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            if let pid = app?.processIdentifier, pid != own { self?.setFront(pid) }
+        }
+
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        // 10 Hz keeps the orb glued to a dragged window; the leeway lets macOS coalesce wakeups.
+        t.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(20))
+        t.setEventHandler { [weak self] in
+            guard let self else { return }
+            let result = self.tick()
+            guard self.lastPublished.map({ $0.0 != result.hasHost || $0.1 != result.frame }) ?? true else { return }
+            self.lastPublished = (result.hasHost, result.frame)
+            DispatchQueue.main.async { onChange(result.hasHost, result.frame.map(Self.toAppKit)) }
+        }
+        t.resume()
+        timer = t
+    }
+
+    private func setFront(_ pid: Int32) { front.withLock { frontPID = pid } }
+
+    /// On `queue`.
+    private func tick() -> Result {
+        if Date().timeIntervalSince(lastSlowRefresh) > 2 {
+            lastSlowRefresh = Date()
+            // Clients can attach or detach, and windows open, close or change tabs.
             hosts = Self.findHosts()
+            cachedHostWindows = Self.windows(.optionAll, of: hosts)
         }
         guard !hosts.isEmpty else { return (false, nil) }
-        var front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        if front == getpid() { front = lastForeignFront ?? hosts.first } else { lastForeignFront = front }
-        guard let win = WindowPin.target(windows: Self.allWindows(), hosts: hosts, frontmost: front) else {
-            return (true, nil)
-        }
-        return (true, Self.toAppKit(win.frame))
+        let frontmost = front.withLock { frontPID } ?? hosts.first
+        guard let frontmost, hosts.contains(frontmost) else { return (true, nil) } // hidden, no window query
+        let windows = WindowPin.merge(onScreen: Self.windows(.optionOnScreenOnly, of: [frontmost]),
+                                      cached: cachedHostWindows.filter { $0.pid == frontmost })
+        return (true, WindowPin.target(windows: windows, hosts: hosts, frontmost: frontmost)?.frame)
     }
 
     /// Host apps above herdr-voice itself and above every running `herdr` process (covers a server that
@@ -33,6 +78,7 @@ final class WindowTracker {
         return Set(starts.compactMap { WindowPin.hostApp(from: $0, parent: parentPID, isRegularApp: isRegularApp) })
     }
 
+    /// NSRunningApplication is safe to query off the main thread.
     private static func isRegularApp(_ pid: Int32) -> Bool {
         NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
     }
@@ -60,23 +106,28 @@ final class WindowTracker {
         return String(cString: buf)
     }
 
-    private static func allWindows() -> [WindowPin.Window] {
-        // All windows, so an off-screen Herdr tab still tells us the front window isn't Herdr's.
-        let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        return info.compactMap { w in
-            guard let number = w[kCGWindowNumber as String] as? Int,
-                  let pid = w[kCGWindowOwnerPID as String] as? Int32,
-                  let bounds = w[kCGWindowBounds as String] as? NSDictionary,
+    /// Windows of `pids`, front to back. Reads the owner first and skips everyone else's windows, so the cost of
+    /// bridging hundreds of dictionaries into Swift is only paid for the few that matter.
+    private static func windows(_ option: CGWindowListOption, of pids: Set<Int32>) -> [WindowPin.Window] {
+        guard !pids.isEmpty,
+              let list = CGWindowListCopyWindowInfo([option, .excludeDesktopElements], kCGNullWindowID) as NSArray?
+        else { return [] }
+        var out: [WindowPin.Window] = []
+        for case let w as NSDictionary in list {
+            guard let pid = (w[kCGWindowOwnerPID] as? NSNumber)?.int32Value, pids.contains(pid),
+                  let number = (w[kCGWindowNumber] as? NSNumber)?.intValue,
+                  let bounds = w[kCGWindowBounds] as? NSDictionary,
                   let frame = CGRect(dictionaryRepresentation: bounds)
-            else { return nil }
-            let name = (w[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            return WindowPin.Window(number: number, pid: pid, layer: w[kCGWindowLayer as String] as? Int ?? 0,
-                                    name: name, frame: frame, isOnScreen: w[kCGWindowIsOnscreen as String] as? Bool ?? false)
+            else { continue }
+            let name = (w[kCGWindowName] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            out.append(WindowPin.Window(number: number, pid: pid, layer: (w[kCGWindowLayer] as? NSNumber)?.intValue ?? 0,
+                                        name: name, frame: frame,
+                                        isOnScreen: (w[kCGWindowIsOnscreen] as? NSNumber)?.boolValue ?? false))
         }
+        return out
     }
 
-    /// CGWindowList uses a top-left origin on the main display; AppKit uses bottom-left.
+    /// CGWindowList uses a top-left origin on the main display; AppKit uses bottom-left. Main thread (NSScreen).
     private static func toAppKit(_ r: CGRect) -> NSRect {
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
         return NSRect(x: r.minX, y: mainHeight - r.maxY, width: r.width, height: r.height)

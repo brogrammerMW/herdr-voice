@@ -2,7 +2,18 @@ import AVFoundation
 
 /// Mic capture and playback on one engine with Apple voice processing,
 /// so the always-open mic cancels the assistant's own voice from the speakers.
+///
+/// Voice processing (echo cancellation, noise suppression) is the biggest CPU cost in the app: measured at about
+/// 12% of a core, 5% when bypassed, 0.6% without it. It is bypassed while muted, and can be turned off entirely
+/// with HERDR_VOICE_ECHO_CANCEL=0 for headphone users, who have no echo to cancel.
 final class Audio {
+    /// Whether voice processing is used at all.
+    let echoCancel: Bool
+
+    init(echoCancel: Bool = ProcessInfo.processInfo.environment["HERDR_VOICE_ECHO_CANCEL"] != "0") {
+        self.echoCancel = echoCancel
+    }
+
     static let rate = 24000.0
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -27,8 +38,10 @@ final class Audio {
         // Voice processing fails with -10875 unless the output side exists first.
         _ = engine.mainMixerNode
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        if echoCancel {
+            try input.setVoiceProcessingEnabled(true)
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        }
 
         let inFormat = input.outputFormat(forBus: 0)
         let monoIn = AVAudioFormat(standardFormatWithSampleRate: inFormat.sampleRate, channels: 1)!
@@ -67,6 +80,13 @@ final class Audio {
         }
         let data = Data(bytes: out.int16ChannelData![0], count: Int(out.frameLength) * 2)
         onMic?(data.base64EncodedString())
+    }
+
+    /// While muted nothing from the mic is sent, so the echo canceller has no work worth doing. Playback keeps
+    /// running (you still hear the voice), which is why the engine stays up and voice processing is only bypassed.
+    func setMuted(_ muted: Bool) {
+        guard echoCancel else { return }
+        engine.inputNode.isVoiceProcessingBypassed = muted
     }
 
     /// Queues one base64 PCM16 chunk of assistant audio.

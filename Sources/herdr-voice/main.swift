@@ -60,16 +60,16 @@ if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }
 
+if env["HERDR_VOICE_ECHO_CANCEL"] == "0" { log("echo cancellation off (HERDR_VOICE_ECHO_CANCEL=0): use headphones") }
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
 let orb = Orb { session.toggleMute() }
 Hotkey.registerMute { session.toggleMute() }
 
 // Pin the orb to the terminal window showing Herdr; HERDR_VOICE_ORB_PIN=0 keeps it in the screen corner.
+let windowTracker = WindowTracker()
 if env["HERDR_VOICE_ORB_PIN"] != "0" {
-    let tracker = WindowTracker()
-    Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-        let (hasHost, frame) = tracker.locate()
+    windowTracker.start { hasHost, frame in
         if hasHost { orb.follow(frame) } else { orb.showInScreenCorner() }
     }
 }

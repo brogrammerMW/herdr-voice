@@ -16,8 +16,7 @@ extension HerdrTools {
             return "error: close tools are disabled because herdr-voice is not running inside a Herdr pane"
         }
         let kind: FocusTarget.Kind = tool == "close_tab" ? .tab : .workspace
-        let targets = focusTargets(agents: "", workspaces: kind == .workspace ? run(["workspace", "list"]) : "",
-                                   tabs: kind == .tab ? run(["tab", "list"]) : "")
+        let targets = focusTargets(snapshot: run(["api", "snapshot"])).filter { $0.kind == kind }
         let t: FocusTarget
         switch resolveFocus(query, in: targets) {
         case .success(let hit): t = hit

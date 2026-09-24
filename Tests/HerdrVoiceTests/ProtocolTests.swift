@@ -46,6 +46,11 @@ private let agentsJSON = #"{"result":{"agents":[{"name":"claude-2","pane_id":"w2
 private let workspacesJSON = #"{"result":{"workspaces":[{"workspace_id":"w2H","label":"forge"},{"workspace_id":"w2F","label":"forms-portal"},{"workspace_id":"wS","label":"Terrace"}]}}"#
 private let tabsJSON = #"{"result":{"tabs":[{"tab_id":"wS:t1","label":"Docs Cleanup"},{"tab_id":"w2F:t1","label":"1"},{"tab_id":"w2H:t1","label":"1"}]}}"#
 private let targets = HerdrTools.focusTargets(agents: agentsJSON, workspaces: workspacesJSON, tabs: tabsJSON)
+private let snapshotJSON = #"{"result":{"type":"snapshot","snapshot":{"agents":[{"name":"claude-2","pane_id":"w2F:p3"},{"pane_id":"wS:p3"}],"workspaces":[{"workspace_id":"w2H","label":"forge"},{"workspace_id":"w2F","label":"forms-portal"},{"workspace_id":"wS","label":"Terrace"}],"tabs":[{"tab_id":"wS:t1","label":"Docs Cleanup"},{"tab_id":"w2F:t1","label":"1"},{"tab_id":"w2H:t1","label":"1"}]}}}"#
+
+@Test func snapshotGivesTheSameTargetsAsTheThreeListCalls() {
+    #expect(HerdrTools.focusTargets(snapshot: snapshotJSON) == targets)
+}
 
 @Test("focus resolves spoken names", arguments: [
     ("Forge", "w2H"), ("claude-2", "claude-2"), ("terrace", "wS"), ("docs clean", "wS:t1"), ("wS:p3", "wS:p3"), ("w2F:t1", "w2F:t1"),
@@ -71,10 +76,11 @@ func focusResolves(query: String, id: String) throws {
         case "agent" where args[1] == "list": return agentsJSON
         case "workspace" where args[1] == "list": return workspacesJSON
         case "tab" where args[1] == "list": return tabsJSON
+        case "api" where args[1] == "snapshot": return snapshotJSON
         default: return #"{"result":{}}"#
         }
     }
-    #expect(ran.last == ["workspace", "focus", "w2H"])
+    #expect(ran == [["api", "snapshot"], ["workspace", "focus", "w2H"]]) // one batched read, then the focus
     #expect(out.output == "focused workspace forge")
 }
 

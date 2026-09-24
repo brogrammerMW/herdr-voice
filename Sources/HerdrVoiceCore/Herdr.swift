@@ -164,7 +164,7 @@ public enum HerdrTools {
 
     /// Resolves a spoken name and focuses it; ambiguity is returned to the model instead of guessing.
     static func focus(_ query: String, _ run: Runner) -> String {
-        let all = focusTargets(agents: run(["agent", "list"]), workspaces: run(["workspace", "list"]), tabs: run(["tab", "list"]))
+        let all = focusTargets(snapshot: run(["api", "snapshot"]))
         switch resolveFocus(query, in: all) {
         case .success(let t):
             let out = run([t.kind.rawValue, "focus", t.id])
@@ -198,19 +198,32 @@ public enum HerdrTools {
         return .failure(FocusError(text: "error: nothing named \(query); known: \(known)"))
     }
 
+    /// One `herdr api snapshot` holds agents, workspaces and tabs: one process spawn instead of three list calls.
+    public static func focusTargets(snapshot json: String) -> [FocusTarget] {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        let snap = (obj?["result"] as? [String: Any])?["snapshot"] as? [String: Any] ?? [:]
+        func list(_ key: String) -> [[String: Any]] { snap[key] as? [[String: Any]] ?? [] }
+        return targets(agents: list("agents"), workspaces: list("workspaces"), tabs: list("tabs"))
+    }
+
+    /// From the separate `herdr agent|workspace|tab list` responses.
     public static func focusTargets(agents: String, workspaces: String, tabs: String) -> [FocusTarget] {
+        targets(agents: rows(agents, "agents"), workspaces: rows(workspaces, "workspaces"), tabs: rows(tabs, "tabs"))
+    }
+
+    private static func targets(agents: [[String: Any]], workspaces: [[String: Any]], tabs: [[String: Any]]) -> [FocusTarget] {
         func detail(_ r: [String: Any]) -> String {
             "\(r["pane_count"] as? Int ?? 0) panes, agents \(r["agent_status"] as? String ?? "none")"
         }
-        let a = rows(agents, "agents").compactMap { r -> FocusTarget? in
+        let a = agents.compactMap { r -> FocusTarget? in
             guard let id = (r["name"] ?? r["pane_id"]) as? String else { return nil }
             return FocusTarget(kind: .agent, id: id, label: id)
         }
-        let w = rows(workspaces, "workspaces").compactMap { r -> FocusTarget? in
+        let w = workspaces.compactMap { r -> FocusTarget? in
             guard let id = r["workspace_id"] as? String else { return nil }
             return FocusTarget(kind: .workspace, id: id, label: r["label"] as? String ?? id, detail: detail(r))
         }
-        let t = rows(tabs, "tabs").compactMap { r -> FocusTarget? in
+        let t = tabs.compactMap { r -> FocusTarget? in
             guard let id = r["tab_id"] as? String else { return nil }
             return FocusTarget(kind: .tab, id: id, label: r["label"] as? String ?? id, detail: detail(r))
         }

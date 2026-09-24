@@ -79,6 +79,7 @@ final class Realtime {
     func toggleMute() {
         if status == .disconnected { return connect() }
         muted.toggle()
+        audio.setMuted(muted)
         if muted { sendRaw(["type": "input_audio_buffer.clear"]) }
         log(muted ? "🔇 muted" : "🎙  listening")
     }

@@ -55,3 +55,12 @@ private let tabStrip = win(11248, nil, h: 32)
     let otherApp = win(4, "herdr docs", pid: 42)
     #expect(WindowPin.target(windows: [otherApp, floating, herdrWin], hosts: [terminal], frontmost: terminal) == herdrWin)
 }
+
+@Test func mergeAppendsCachedWindowsThatAreNotOnScreenNow() {
+    let hiddenHerdr = win(502, herdrWin.name)          // cached as on screen 2 s ago, not in this tick's list
+    let merged = WindowPin.merge(onScreen: [otherWin], cached: [otherWin, hiddenHerdr])
+    #expect(merged.map(\.number) == [600, 502])       // on-screen order first, no duplicates
+    #expect(merged.last?.isOnScreen == false)
+    // Which is exactly what keeps the orb off another tab.
+    #expect(WindowPin.target(windows: merged, hosts: [terminal], frontmost: terminal) == nil)
+}
