@@ -27,6 +27,7 @@ if args.contains("--orb-demo") {
             lastSpoken = phase
             audio.play(base64: demoSpeech(seconds: 3.5), item: "demo-\(phase)")
         }
+        Hotkey.setStopKey(active: audio.isSpeaking) { _ = audio.interrupt(); log("⏹  stopped (Esc)") }
         orb.update(mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0)
     }
     do { try audio.start() } catch { log("✖ audio: \(error.localizedDescription)"); exit(1) }
@@ -49,10 +50,11 @@ if env["HERDR_ENV"] != "1" {
 
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
 let orb = Orb { session.toggleMute() }
-Hotkey.register { session.toggleMute() }
+Hotkey.registerMute { session.toggleMute() }
 
 Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     let a = session.audio
+    Hotkey.setStopKey(active: a.isSpeaking) { session.stopSpeech(reason: "Esc") }
     let mood: Orb.Mood
     if session.status == .disconnected { mood = .offline }
     else if a.isSpeaking { mood = .speaking }

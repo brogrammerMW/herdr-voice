@@ -6,6 +6,7 @@ public enum ServerEvent: Equatable {
     case assistantTranscript(String)
     case userTranscript(String)
     case speechStarted
+    case responseCreated
     case functionCall(callID: String, name: String, arguments: String)
     case responseDone
     case error(String)
@@ -32,6 +33,8 @@ public enum ServerEvent: Equatable {
                 callID: obj["call_id"] as? String ?? "",
                 name: obj["name"] as? String ?? "",
                 arguments: obj["arguments"] as? String ?? "{}")
+        case "response.created":
+            return .responseCreated
         case "response.done":
             return .responseDone
         case "error":
@@ -40,5 +43,21 @@ public enum ServerEvent: Equatable {
         default:
             return .ignored(type)
         }
+    }
+}
+
+/// Recognizes a short spoken "stop" aimed at the assistant's speech, e.g. "stop", "ok stop", "be quiet", "never mind".
+/// Longer sentences that merely contain "stop" ("stop the dev server") are requests, not interrupts.
+public enum StopCommand {
+    private static let phrases: Set<String> = [
+        "stop", "stop talking", "stop it", "stop stop", "quiet", "be quiet", "shut up", "hush", "silence",
+        "enough", "that's enough", "thats enough", "never mind", "nevermind", "cancel", "cancel that",
+    ]
+    private static let filler: Set<String> = ["ok", "okay", "please", "just", "hey", "now", "alright", "all", "right"]
+
+    public static func matches(_ transcript: String) -> Bool {
+        let words = transcript.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init)
+        guard !words.isEmpty, words.count <= 5 else { return false }
+        return phrases.contains(words.filter { !filler.contains($0) }.joined(separator: " "))
     }
 }

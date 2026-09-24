@@ -15,8 +15,12 @@ final class Audio {
     private(set) var micLevel: Float = 0
     private(set) var outLevel: Float = 0
 
-    private var scheduledSamples: Int64 = 0
-    private var itemStartSample: Int64 = 0
+    // Playback is tracked by buffer completion callbacks: the player's sample clock keeps running while idle,
+    // so comparing it with queued samples misreports whether anything is audible.
+    private var pendingBuffers = 0
+    private var itemPlayedSamples: Int64 = 0
+    /// Bumped on interrupt so callbacks from flushed buffers are ignored.
+    private var generation = 0
     private(set) var currentItem = ""
 
     func start() throws {
@@ -70,7 +74,7 @@ final class Audio {
         guard let data = Data(base64Encoded: base64), !data.isEmpty else { return }
         if item != currentItem {
             currentItem = item
-            itemStartSample = scheduledSamples
+            itemPlayedSamples = 0
         }
         let frames = data.count / 2
         guard let buf = AVAudioPCMBuffer(pcmFormat: float24k, frameCapacity: AVAudioFrameCount(frames)) else { return }
@@ -80,25 +84,30 @@ final class Audio {
             let s = raw.bindMemory(to: Int16.self)
             for i in 0..<frames { dst[i] = Float(Int16(littleEndian: s[i])) / 32768 }
         }
-        scheduledSamples += Int64(frames)
-        player.scheduleBuffer(buf)
+        pendingBuffers += 1
+        let gen = generation
+        player.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, gen == self.generation else { return }
+                self.pendingBuffers -= 1
+                if item == self.currentItem { self.itemPlayedSamples += Int64(frames) }
+            }
+        }
     }
 
-    var isSpeaking: Bool { playedSamples < scheduledSamples }
-
-    private var playedSamples: Int64 {
-        guard let t = player.lastRenderTime, let pt = player.playerTime(forNodeTime: t) else { return 0 }
-        return pt.sampleTime
-    }
+    /// Main queue only, like `play` and `interrupt`.
+    var isSpeaking: Bool { pendingBuffers > 0 }
 
     /// Stops playback and returns how many ms of the current item were heard, for conversation.item.truncate.
     func interrupt() -> Int {
-        let heardMs = Int(max(0, playedSamples - itemStartSample) * 1000 / Int64(Audio.rate))
+        // Granularity is one server chunk (tens of ms), plenty for truncation.
+        let heardMs = Int(itemPlayedSamples * 1000 / Int64(Audio.rate))
+        generation += 1
+        pendingBuffers = 0
+        itemPlayedSamples = 0
         player.stop()
         player.play()
         outLevel = 0
-        scheduledSamples = 0
-        itemStartSample = 0
         return heardMs
     }
 

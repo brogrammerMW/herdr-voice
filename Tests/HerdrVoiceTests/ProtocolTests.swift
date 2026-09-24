@@ -77,3 +77,13 @@ func focusResolves(query: String, id: String) throws {
     #expect(ran.last == ["workspace", "focus", "w2H"])
     #expect(out.output == "focused workspace forge")
 }
+
+@Test("short stop phrases interrupt", arguments: ["Stop.", "ok stop", "Stop talking!", "be quiet please", "Never mind.", "that's enough", "hey, shut up"])
+func stopPhrasesMatch(t: String) { #expect(StopCommand.matches(t)) }
+
+@Test("requests that mention stop are not interrupts", arguments: ["stop the dev server", "don't stop", "can you stop claude-2 from pushing", "quietly run the tests", ""])
+func stopRequestsDoNotMatch(t: String) { #expect(!StopCommand.matches(t)) }
+
+@Test func responseCreatedDecodes() {
+    #expect(ServerEvent.decode(#"{"type":"response.created","response":{"id":"r1"}}"#) == .responseCreated)
+}

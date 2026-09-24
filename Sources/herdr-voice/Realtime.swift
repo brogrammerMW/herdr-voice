@@ -16,6 +16,10 @@ final class Realtime {
     private(set) var muted = false
     /// Agents currently being watched in the background.
     private(set) var busyAgents = Set<String>()
+    /// A response is being generated; `response.cancel` is only valid while this is true.
+    private var responseActive = false
+    /// After a stop, audio still in flight for the cancelled response is dropped until the next response starts.
+    private var droppingAudio = false
 
     init(provider: Provider, key: String, voice: String) {
         self.provider = provider
@@ -41,7 +45,7 @@ final class Realtime {
         task.resume()
         sendRaw(provider.sessionUpdate(instructions: voiceInstructions, voice: voice))
         status = .live
-        log("● connecting to \(provider.rawValue) — speak any time, \(Hotkey.label) mutes")
+        log("● connecting to \(provider.rawValue) — speak any time, \(Hotkey.label) mutes, Esc stops speech")
         receive(task)
     }
 
@@ -50,6 +54,24 @@ final class Realtime {
         muted.toggle()
         if muted { sendRaw(["type": "input_audio_buffer.clear"]) }
         log(muted ? "🔇 muted" : "🎙  listening")
+    }
+
+    /// Stops the assistant mid-sentence (Esc or a spoken "stop"): cancels generation and drops queued audio.
+    func stopSpeech(reason: String) {
+        guard responseActive || audio.isSpeaking else { return }
+        if responseActive { sendRaw(["type": "response.cancel"]) }
+        responseActive = false
+        droppingAudio = true
+        cutPlayback()
+        log("⏹  stopped (\(reason))")
+    }
+
+    /// Stops local playback and tells the server how much of the reply was actually heard.
+    private func cutPlayback() {
+        guard audio.isSpeaking else { return }
+        let item = audio.currentItem
+        let ms = audio.interrupt()
+        sendRaw(["type": "conversation.item.truncate", "item_id": item, "content_index": 0, "audio_end_ms": ms])
     }
 
     private func receive(_ task: URLSessionWebSocketTask) {
@@ -73,22 +95,27 @@ final class Realtime {
     private func handle(_ event: ServerEvent) {
         switch event {
         case .audioDelta(let item, let b64):
-            audio.play(base64: b64, item: item)
+            if !droppingAudio { audio.play(base64: b64, item: item) }
+        case .responseCreated:
+            responseActive = true
+            droppingAudio = false
         case .assistantTranscript(let t):
             log("voice: \(t)")
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
             ConfirmGate.shared.heard(t)
+            // The server may already be answering the "stop" itself; cancel that too.
+            if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
         case .speechStarted:
-            guard audio.isSpeaking else { return }
-            let item = audio.currentItem
-            let ms = audio.interrupt()
-            sendRaw(["type": "conversation.item.truncate", "item_id": item, "content_index": 0, "audio_end_ms": ms])
+            // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest.
+            cutPlayback()
         case .functionCall(let callID, let name, let args):
             runTool(callID: callID, name: name, args: args)
         case .error(let msg):
             log("✖ \(msg)")
-        case .responseDone, .ignored:
+        case .responseDone:
+            responseActive = false
+        case .ignored:
             break
         }
     }
