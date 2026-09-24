@@ -20,7 +20,7 @@ public enum Provider: String, CaseIterable {
     public var defaultVoice: String {
         switch self {
         case .openai: "marin"
-        case .grok: "ara"
+        case .grok: "eve"
         }
     }
 

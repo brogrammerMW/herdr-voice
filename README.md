@@ -13,7 +13,7 @@ export XAI_API_KEY=...          # or OPENAI_API_KEY with --provider openai
 | Setting | How |
 |---|---|
 | Provider | `--provider grok\|openai` or `HERDR_VOICE_PROVIDER` (default `grok`) |
-| Voice | `HERDR_VOICE_VOICE` (default `ara` / `marin`) |
+| Voice | `HERDR_VOICE_VOICE` (default `eve` for Grok, `marin` for OpenAI) |
 | Mute | `⌥⌘M` anywhere, or click the orb. Key code override: `HERDR_VOICE_HOTKEY_KEYCODE` |
 
 Orb (bottom-left): blue = listening, violet = speaking, amber = an agent is working, grey = muted, red = offline
