@@ -25,6 +25,10 @@ final class Realtime {
     private(set) var busyAgents = Set<String>()
     /// A response is being generated; `response.cancel` is only valid while this is true.
     private var responseActive = false
+    /// Code-level enforcement of the speaking style for the reply being generated.
+    private var policy = SpeechPolicy()
+    /// One corrective retry per reply chain, so a model that keeps leaking can't loop.
+    private var retriedLeak = false
     /// After a stop, audio still in flight for the cancelled response is dropped until the next response starts.
     private var droppingAudio = false
 
@@ -78,6 +82,30 @@ final class Realtime {
         log("⏹  stopped (\(reason))")
     }
 
+    private func enforce(_ verdict: SpeechPolicy.Verdict) {
+        switch verdict {
+        case .ok:
+            break
+        case .tooLong:
+            // Stop generating; audio already queued finishes, so the cut lands near the end of sentence two.
+            if responseActive { sendRaw(["type": "response.cancel"]) }
+            responseActive = false
+            droppingAudio = true
+            log("✂  cut after \(SpeechPolicy.maxSentences) sentences")
+        case .leak(let what):
+            stopSpeech(reason: "was reading \(what) aloud")
+            guard !retriedLeak else { return }
+            retriedLeak = true
+            sendRaw(["type": "conversation.item.create", "item": [
+                "type": "message", "role": "user",
+                "content": [["type": "input_text", "text":
+                    "[policy] You started reading \(what) aloud and were cut off. Say it again as one or two plain "
+                    + "sentences with no code, paths, file names, URLs or diffs."]],
+            ]])
+            sendRaw(["type": "response.create"])
+        }
+    }
+
     /// Stops local playback and tells the server how much of the reply was actually heard.
     private func cutPlayback() {
         guard audio.isSpeaking else { return }
@@ -111,11 +139,16 @@ final class Realtime {
         case .responseCreated:
             responseActive = true
             droppingAudio = false
+            // A run_shell approval question reads the command aloud on purpose.
+            policy = SpeechPolicy(allowCode: ConfirmGate.shared.pendingAction?.hasPrefix("run_shell") == true)
+        case .assistantTranscriptDelta(let delta):
+            enforce(policy.feed(delta))
         case .assistantTranscript(let t):
             log("voice: \(t)")
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
             ConfirmGate.shared.heard(t)
+            retriedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
         case .speechStarted:

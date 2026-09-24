@@ -30,6 +30,9 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   drift inside it; your voice pushes them outward, the assistant's voice lights a pulsing core. Click it to mute.
 - **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
   forge on?"), each one only after you approve it out loud.
+- **Summaries only, enforced.** Replies are one or two sentences with no code, paths, file names, URLs or diffs read
+  aloud. That isn't just an instruction: herdr-voice checks the live transcript and cuts the voice off if it breaks
+  the rule.
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
 - **Choice of provider and voice.** Grok (default) or OpenAI, and any of their voices: Eve, Rex, Ara, Sal, Leo, or a
   custom cloned voice on Grok.
@@ -215,6 +218,20 @@ When you send work, herdr-voice waits (in the background) until Herdr reports th
 reads the last lines of its terminal, and hands them to the voice model to summarize. That is what lets the voice
 speak up on its own when an agent finishes.
 
+## How it talks
+
+The voice gives high-level summaries and speaks up on its own only when an agent finishes, fails or needs approval.
+The rules are in its instructions, and herdr-voice also enforces them from the live transcript (`SpeechPolicy`):
+
+- **Two sentences max.** When a third sentence starts, generation is cancelled; audio already on its way still
+  plays, so the cut lands at about the end of sentence two. The pane logs `✂  cut after 2 sentences`.
+- **No code aloud.** If the transcript shows a file path, a file name with a code extension, a URL, backticks,
+  braces, `()` or diff markers, the voice is stopped at once and asked, once, to say the same thing as a plain
+  summary. The pane logs `⏹  stopped (was reading a file path aloud)`.
+- **Exception:** when asking you to approve a `run_shell` command, it may read that command aloud.
+
+Want the details? Ask it to show you the agent's pane ("show me claude-2") and read them there.
+
 ## Privacy and safety
 
 - **What leaves your Mac.** While unmuted, mic audio streams to the provider you chose (xAI or OpenAI). When you ask
@@ -247,6 +264,9 @@ speak up on its own when an agent finishes.
 - A spoken "stop" takes effect once your words are transcribed, so a word or two may still play first. `Esc` is
   immediate.
 - While the voice is talking, `Esc` goes to herdr-voice, not the app you are typing in.
+- Speech enforcement works on the transcript, which runs slightly ahead of the audio, so a cut can land a word or two
+  either side of the sentence boundary. It relies on the provider streaming transcript deltas
+  (`response.output_audio_transcript.delta`); without them only the instructions apply.
 - `run_shell` stops the shell when it times out, but anything it started in the background keeps running.
 - No automatic reconnect. If the connection drops the orb turns red; press `⌥⌘M` to reconnect. Providers cap session
   length (OpenAI: 60 minutes).
@@ -258,7 +278,7 @@ speak up on its own when an agent finishes.
 
 ```bash
 swift build          # debug build
-swift test           # 30 tests: event decoding, Herdr tools, focus, confirmations, prompt-injection gates, shell, stop phrases
+swift test           # 36 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, stop phrases
 swift build -c release
 ```
 
@@ -271,6 +291,7 @@ Sources/
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
+    SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
