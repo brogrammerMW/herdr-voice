@@ -19,6 +19,8 @@ export XAI_API_KEY=...          # or OPENAI_API_KEY with --provider openai
 Orb (bottom-left): blue = listening, violet = speaking, amber = an agent is working, grey = muted, red = offline
 (press `⌥⌘M` to reconnect).
 
+Preview the orb without a key: `.build/release/herdr-voice --orb-demo` (cycles moods, reacts to your mic).
+
 The mic stays open, with macOS echo cancellation so it can work on speakers. Talk over the voice to interrupt it.
 Try: "what agents are running?", "tell claude-2 to run the tests", "what is it doing?", "approve it".
 The first run asks for microphone access for your terminal.

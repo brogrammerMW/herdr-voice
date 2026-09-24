@@ -9,6 +9,24 @@ let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
     ?? env["HERDR_VOICE_PROVIDER"] ?? "grok"
 
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+
+// --orb-demo: orb only, driven by the live mic, cycling moods every 4s. No network, no key.
+if args.contains("--orb-demo") {
+    let audio = Audio()
+    let orb = Orb {}
+    let moods: [Orb.Mood] = [.listening, .speaking, .working, .muted, .offline]
+    let start = Date()
+    Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
+        orb.update(moods[Int(Date().timeIntervalSince(start) / 4) % moods.count], level: audio.micLevel)
+    }
+    do { try audio.start() } catch { log("✖ audio: \(error.localizedDescription)"); exit(1) }
+    log("orb demo: talk to see it react; ctrl+c to quit")
+    signal(SIGINT) { _ in exit(0) }
+    app.run()
+}
+
 guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use openai or grok\n".utf8))
     exit(2)
@@ -21,14 +39,11 @@ if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session")
 }
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
 let orb = Orb { session.toggleMute() }
 Hotkey.register { session.toggleMute() }
 
-Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
+Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     session.audio.tickLevels()
     let mood: Orb.Mood
     var level: Float = 0

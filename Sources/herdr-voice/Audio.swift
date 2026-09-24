@@ -99,7 +99,7 @@ final class Audio {
 
     /// Decays the output level between chunks so the orb settles when speech stops.
     func tickLevels() {
-        outLevel *= 0.85
+        outLevel *= 0.92
         if !isSpeaking { outLevel = 0 }
     }
 
