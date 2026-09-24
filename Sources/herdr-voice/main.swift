@@ -45,7 +45,7 @@ guard let key = env[provider.keyEnv], !key.isEmpty else {
     exit(2)
 }
 if env["HERDR_ENV"] != "1" {
-    log("⚠ not inside a Herdr pane; herdr commands will target the focused session")
+    log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }
 
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)

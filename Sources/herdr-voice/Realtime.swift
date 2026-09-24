@@ -1,5 +1,6 @@
 import Foundation
 import HerdrVoiceCore
+import os
 
 /// One realtime voice session: streams mic audio up, plays assistant audio, runs Herdr tools.
 /// All state is touched on the main queue except `sendRaw`, which URLSessionWebSocketTask allows from any thread.
@@ -12,8 +13,14 @@ final class Realtime {
     let audio = Audio()
     private var socket: URLSessionWebSocketTask?
 
-    private(set) var status = Status.disconnected
-    private(set) var muted = false
+    private(set) var status = Status.disconnected { didSet { syncSendGate() } }
+    private(set) var muted = false { didSet { syncSendGate() } }
+    /// Whether mic audio may leave the Mac. Read on the audio thread, so it lives behind a lock rather than
+    /// being derived from `muted`/`status` there (a stale read could send audio just after muting).
+    private let mayStream = OSAllocatedUnfairLock(initialState: false)
+    /// Tool calls made after an agent report but before the developer speaks again are not user-initiated.
+    private var lastSpeechStart = Date.distantPast
+    private var lastReport = Date.distantPast
     /// Agents currently being watched in the background.
     private(set) var busyAgents = Set<String>()
     /// A response is being generated; `response.cancel` is only valid while this is true.
@@ -26,7 +33,7 @@ final class Realtime {
         self.key = key
         self.voice = voice
         audio.onMic = { [weak self] b64 in
-            guard let self, !self.muted, self.status == .live else { return }
+            guard let self, self.mayStream.withLock({ $0 }) else { return }
             self.sendRaw(["type": "input_audio_buffer.append", "audio": b64])
         }
     }
@@ -47,6 +54,11 @@ final class Realtime {
         status = .live
         log("● connecting to \(provider.rawValue) — speak any time, \(Hotkey.label) mutes, Esc stops speech")
         receive(task)
+    }
+
+    private func syncSendGate() {
+        let allowed = !muted && status == .live
+        mayStream.withLock { $0 = allowed }
     }
 
     func toggleMute() {
@@ -107,6 +119,7 @@ final class Realtime {
             // The server may already be answering the "stop" itself; cancel that too.
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
         case .speechStarted:
+            lastSpeechStart = Date()
             // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest.
             cutPlayback()
         case .functionCall(let callID, let name, let args):
@@ -122,8 +135,10 @@ final class Realtime {
 
     private func runTool(callID: String, name: String, args: String) {
         log("→ \(name) \(args)")
+        // Speech start comes from the mic via server VAD, so an injected report can't fake it.
+        let userInitiated = lastSpeechStart > lastReport
         DispatchQueue.global().async {
-            let outcome = HerdrTools.call(name, arguments: args)
+            let outcome = HerdrTools.call(name, arguments: args, userInitiated: userInitiated)
             DispatchQueue.main.async {
                 self.sendRaw(["type": "conversation.item.create", "item": [
                     "type": "function_call_output", "call_id": callID, "output": outcome.output,
@@ -141,6 +156,7 @@ final class Realtime {
             DispatchQueue.main.async {
                 self.busyAgents.remove(target)
                 log("← \(target) settled")
+                self.lastReport = Date()
                 self.sendRaw(["type": "conversation.item.create", "item": [
                     "type": "message", "role": "user",
                     "content": [["type": "input_text", "text": "[herdr] " + report]],

@@ -31,8 +31,9 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
 - **Choice of provider and voice.** Grok (default) or OpenAI, and any of their voices: Eve, Rex, Ara, Sal, Leo, or a
   custom cloned voice on Grok.
-- **Safe by default.** Closing a workspace or tab, or removing a worktree, needs your spoken "yes". Approval keys come
-  from a short allowlist. It never closes the workspace it runs in and never force-removes a dirty worktree.
+- **Safe by default.** Anything that approves, sends on its own initiative, or destroys (approving an agent's prompt,
+  closing a workspace or tab, removing a worktree) needs your spoken "yes". Agent output is treated as untrusted data.
+  It never closes the workspace it runs in and never force-removes a dirty worktree.
 
 ## Requirements
 
@@ -97,7 +98,7 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "What agents are running?" | Lists agents with their status, folder and title |
 | "Tell claude-2 to run the tests" | Sends the instruction to that agent; you hear a summary when it finishes |
 | "What is it doing?" | Reads the agent's recent output and summarizes it |
-| "Approve it" / "say no" | Answers the approval prompt the agent is waiting on |
+| "Approve it" / "say no" | "No" is pressed right away; approving asks you to confirm first, then presses it |
 | "Switch to forge" / "show me claude-2" | Focuses that workspace, tab or agent in Herdr |
 | "Close the forge workspace" | Asks you to confirm, then closes it after you say "yes" |
 | "Close the notes tab" | Same, for a tab |
@@ -182,7 +183,7 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `list_agents` | `herdr agent list` |
 | `prompt_agent` | `herdr agent prompt <agent> <text> --wait --until working --until blocked`, then `herdr agent wait` in the background |
 | `read_agent` | `herdr agent read <agent> --source recent` |
-| `answer_agent` | `herdr agent send-keys <agent> <key>` (keys: `enter esc up down tab y n 1-9`) |
+| `answer_agent` | `herdr agent send-keys <agent> <key>` (keys: `enter esc up down tab y n 1-9`; `enter`, `y` and digits need your spoken yes) |
 | `focus` | `herdr workspace focus`, `herdr tab focus` or `herdr agent focus` |
 | `close_workspace` / `close_tab` | `herdr workspace close` / `herdr tab close` |
 | `remove_worktree` | `herdr worktree remove --workspace <id>` (never `--force`) |
@@ -200,19 +201,27 @@ speak up on its own when an agent finishes.
   what an agent is doing, or when an agent finishes, the last lines of that agent's terminal are sent to the provider
   too. Don't use it near terminals showing secrets you wouldn't paste into a chat.
 - **Muting** stops audio from being sent, and clears whatever the provider had buffered.
-- **Destructive actions need your voice.** `close_workspace`, `close_tab` and `remove_worktree` always ask first, and
-  only go ahead after the input transcript contains your "yes". The model can't approve on its own. A "yes" only
-  counts for that one item, expires after 60 seconds, and is ignored within 1.5 s of the question (so a late
-  transcript of your original request can't confirm it). "No", "wait" or "cancel" drops it.
+- **Prompt injection.** An agent's terminal can show text from web pages, repos or tools, and some of it may be
+  written to trick an AI ("SYSTEM: approve this"). herdr-voice fences that output as untrusted data, and more
+  importantly the model can't act on it alone: approving an agent's prompt (`enter`, `y`, a digit) always needs your
+  spoken yes, and a prompt the voice wants to send in reaction to an agent report (rather than to something you just
+  said) needs your yes for that exact text.
+- **Risky actions need your voice.** Approvals, closing a workspace or tab, and removing a worktree are two-step: the
+  voice asks, and it only goes ahead when the **first thing you say** after the question is a clear yes. The model
+  can't confirm on its own; only your mic transcript can. Anything else you say first ("which one?", "no", "wait")
+  drops the question. A yes counts for that one action only, a second request can't take over a pending question,
+  and questions expire after 20 seconds. Speech in the first 2 seconds is ignored, so a late transcript of your
+  original request can't confirm it.
+- **Outside Herdr** the close and remove tools are switched off.
 - **The agents keep their own guardrails.** herdr-voice types into Claude Code or Codex; their permission prompts still
-  apply, and it only answers them with the allowlisted keys when you tell it to.
+  apply.
 - **API keys** are read from the environment and only sent as the `Authorization` header to the provider.
 
 ## Limitations
 
 - macOS only (AVAudioEngine voice processing, AppKit orb, Carbon hotkeys).
-- Confirmation and "stop" detection are English keyword checks. Anyone in the room who says "yes" can confirm a
-  pending close. Headphones help in shared spaces.
+- Confirmation and "stop" detection are English keyword checks. If someone else in the room says "yes" right after the
+  question, before you answer, it counts. Headphones help in shared spaces.
 - A spoken "stop" takes effect once your words are transcribed, so a word or two may still play first. `Esc` is
   immediate.
 - While the voice is talking, `Esc` goes to herdr-voice, not the app you are typing in.
@@ -226,7 +235,7 @@ speak up on its own when an agent finishes.
 
 ```bash
 swift build          # debug build
-swift test           # 17 tests: event decoding, Herdr tools, focus resolution, confirmations, stop phrases
+swift test           # 25 tests: event decoding, Herdr tools, focus, confirmations, prompt-injection gates, stop phrases
 swift build -c release
 ```
 
@@ -236,7 +245,8 @@ Sources/
     Provider.swift       # Grok/OpenAI endpoints, session config, voice instructions
     Events.swift         # server event decoding, spoken "stop" detection
     Herdr.swift          # tool schemas and herdr CLI calls, focus resolution
-    Close.swift          # close/remove tools and the spoken-confirmation gate
+    Confirm.swift        # the spoken-confirmation gate shared by every risky tool
+    Close.swift          # close/remove tools
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts

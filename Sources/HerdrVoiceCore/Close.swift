@@ -1,66 +1,5 @@
 import Foundation
 
-/// Holds one pending destructive action until the developer's own speech confirms it.
-/// The model cannot confirm on its own: only `heard(_:)`, fed from the user transcript, flips the flag.
-public final class ConfirmGate {
-    public static let shared = ConfirmGate()
-
-    private let lock = NSLock()
-    private var pending: (action: String, at: Date, confirmed: Bool)?
-    private let ttl: TimeInterval
-    private let minDelay: TimeInterval
-    private let clock: () -> Date
-    private let wait: TimeInterval
-
-    /// `minDelay` ignores transcripts that land right after the request, which are usually the
-    /// request itself ("yes, close forge") arriving late rather than an answer to the question.
-    public init(ttl: TimeInterval = 60, minDelay: TimeInterval = 1.5, wait: TimeInterval = 4,
-                clock: @escaping () -> Date = Date.init) {
-        self.ttl = ttl
-        self.wait = wait
-        self.minDelay = minDelay
-        self.clock = clock
-    }
-
-    func request(_ action: String) {
-        lock.withLock { pending = (action, clock(), false) }
-    }
-
-    /// Feed every user transcript here.
-    public func heard(_ transcript: String) {
-        let words = Set(transcript.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init))
-        let text = transcript.lowercased()
-        lock.withLock {
-            guard let p = pending, clock().timeIntervalSince(p.at) >= minDelay else { return }
-            // ponytail: keyword heuristic; a "no" anywhere cancels, so mixed answers fail safe.
-            if !words.isDisjoint(with: ["no", "nope", "don't", "cancel", "stop", "wait", "never"]) {
-                pending = nil
-            } else if !words.isDisjoint(with: ["yes", "yeah", "yep", "yup", "sure", "confirm", "confirmed",
-                                               "correct", "affirmative", "ok", "okay"]) || text.contains("go ahead") {
-                pending = (p.action, p.at, true)
-            }
-        }
-    }
-
-    /// True once if `action` was confirmed. Waits briefly because the "yes" transcript can arrive
-    /// after the model has already issued the confirmed call.
-    func consume(_ action: String) -> Bool {
-        let deadline = clock().addingTimeInterval(wait)
-        repeat {
-            let state: Bool? = lock.withLock {
-                guard let p = pending, clock().timeIntervalSince(p.at) < ttl else { return false }
-                // A confirmed call for anything else voids the "yes": it was given for a different question.
-                guard p.action == action else { pending = nil; return false }
-                if p.confirmed { pending = nil; return true }
-                return nil
-            }
-            if let state { return state }
-            Thread.sleep(forTimeInterval: 0.1)
-        } while clock() < deadline
-        return false
-    }
-}
-
 extension HerdrTools {
     static func closeSchema(_ name: String, _ desc: String) -> [String: Any] {
         fn(name, desc + " Call without confirmed first, ask the developer, then call again with confirmed=true after they say yes.",
@@ -71,6 +10,11 @@ extension HerdrTools {
 
     static func close(_ tool: String, _ query: String, confirmed: Bool, _ run: Runner, _ gate: ConfirmGate,
                       env: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        // Outside Herdr the "never close myself" guard below has no IDs to compare, and commands would hit
+        // whichever session is focused, so destructive tools stay off.
+        guard env["HERDR_ENV"] == "1" else {
+            return "error: close tools are disabled because herdr-voice is not running inside a Herdr pane"
+        }
         let kind: FocusTarget.Kind = tool == "close_tab" ? .tab : .workspace
         let targets = focusTargets(agents: "", workspaces: kind == .workspace ? run(["workspace", "list"]) : "",
                                    tabs: kind == .tab ? run(["tab", "list"]) : "")
@@ -96,13 +40,8 @@ extension HerdrTools {
             command = ["worktree", "remove", "--workspace", t.id] // never --force: dirty trees must fail
         }
 
-        let action = "\(tool):\(t.id)"
-        guard confirmed else {
-            gate.request(action)
-            return "CONFIRMATION REQUIRED. Ask the developer: \(description)? Only after they say yes, call \(tool) again with confirmed=true."
-        }
-        guard gate.consume(action) else {
-            return "error: the developer has not confirmed \(description). Call \(tool) without confirmed and ask again."
+        if let stop = confirmStep(tool, action: "\(tool):\(t.id)", question: description, confirmed: confirmed, gate) {
+            return stop
         }
         let out = run(command)
         return out.contains("\"error\"") ? "failed, tell the developer and do not retry: \(out)" : "done: \(description)"
