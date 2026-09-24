@@ -40,3 +40,40 @@ func audioDeltaVariants(type: String) {
     #expect(missing.watch == nil)
     #expect(missing.output.contains("agent_not_found"))
 }
+
+// Shapes captured from `herdr agent|workspace|tab list`.
+private let agentsJSON = #"{"result":{"agents":[{"name":"claude-2","pane_id":"w2F:p3"},{"pane_id":"wS:p3"}]}}"#
+private let workspacesJSON = #"{"result":{"workspaces":[{"workspace_id":"w2H","label":"forge"},{"workspace_id":"w2F","label":"forms-portal"},{"workspace_id":"wS","label":"Terrace"}]}}"#
+private let tabsJSON = #"{"result":{"tabs":[{"tab_id":"wS:t1","label":"Docs Cleanup"},{"tab_id":"w2F:t1","label":"1"},{"tab_id":"w2H:t1","label":"1"}]}}"#
+private let targets = HerdrTools.focusTargets(agents: agentsJSON, workspaces: workspacesJSON, tabs: tabsJSON)
+
+@Test("focus resolves spoken names", arguments: [
+    ("Forge", "w2H"), ("claude-2", "claude-2"), ("terrace", "wS"), ("docs clean", "wS:t1"), ("wS:p3", "wS:p3"), ("w2F:t1", "w2F:t1"),
+])
+func focusResolves(query: String, id: String) throws {
+    #expect(try HerdrTools.resolveFocus(query, in: targets).get().id == id)
+}
+
+@Test func focusRefusesToGuess() {
+    // "fo" hits forge and forms-portal; "1" hits two tabs; "nope" hits nothing.
+    for q in ["fo", "1", "nope", " "] {
+        guard case .failure = HerdrTools.resolveFocus(q, in: targets) else {
+            Issue.record("\(q) should not resolve"); continue
+        }
+    }
+}
+
+@Test func focusToolRunsTheMatchingFocusCommand() {
+    var ran: [[String]] = []
+    let out = HerdrTools.call("focus", arguments: #"{"target":"forge"}"#) { args in
+        ran.append(args)
+        switch args.first {
+        case "agent" where args[1] == "list": return agentsJSON
+        case "workspace" where args[1] == "list": return workspacesJSON
+        case "tab" where args[1] == "list": return tabsJSON
+        default: return #"{"result":{}}"#
+        }
+    }
+    #expect(ran.last == ["workspace", "focus", "w2H"])
+    #expect(out.output == "focused workspace forge")
+}

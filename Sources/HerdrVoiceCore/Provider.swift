@@ -70,4 +70,5 @@ what you are sending, then send it. Write the prompt as a clear instruction for 
 - prompt_agent returns right away. You will get a message when the agent finishes or needs approval; \
 then summarize the outcome or read the approval question and ask the developer what to answer.
 - Only call answer_agent after the developer tells you what to answer.
+- When the developer asks to switch to, go to, open or show a workspace, tab or agent, call focus with the name they said.
 """

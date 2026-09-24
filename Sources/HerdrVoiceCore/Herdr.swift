@@ -17,6 +17,8 @@ public enum HerdrTools {
            ["target": str("Agent name or pane_id"),
             "key": ["type": "string", "enum": allowedKeys.sorted(), "description": "Key to press"]],
            ["target", "key"]),
+        fn("focus", "Bring a workspace (space), tab or agent pane into view in Herdr, e.g. \"switch to forge\" or \"show me claude-2\".",
+           ["target": str("Workspace, tab or agent name or ID as the developer said it")], ["target"]),
     ]
 
     public typealias Runner = ([String]) -> String
@@ -62,6 +64,8 @@ public enum HerdrTools {
             let key = args["key"] as? String ?? ""
             guard allowedKeys.contains(key) else { return Outcome(output: "error: key \(key) not allowed", watch: nil) }
             return Outcome(output: run(["agent", "send-keys", target, key]), watch: target)
+        case "focus":
+            return Outcome(output: focus(target, run), watch: nil)
         default:
             return Outcome(output: "error: unknown tool \(name)", watch: nil)
         }
@@ -106,5 +110,70 @@ public enum HerdrTools {
     private static func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
         ["type": "function", "name": name, "description": desc,
          "parameters": ["type": "object", "properties": props, "required": req] as [String: Any]]
+    }
+
+    // MARK: focus
+
+    public struct FocusTarget: Equatable {
+        public enum Kind: String, CaseIterable { case agent, workspace, tab }
+        public let kind: Kind
+        public let id: String
+        public let label: String
+    }
+
+    /// Resolves a spoken name and focuses it; ambiguity is returned to the model instead of guessing.
+    static func focus(_ query: String, _ run: Runner) -> String {
+        let all = focusTargets(agents: run(["agent", "list"]), workspaces: run(["workspace", "list"]), tabs: run(["tab", "list"]))
+        switch resolveFocus(query, in: all) {
+        case .success(let t):
+            let out = run([t.kind.rawValue, "focus", t.id])
+            return out.contains("\"error\"") ? out : "focused \(t.kind.rawValue) \(t.label)"
+        case .failure(let msg):
+            return msg.text
+        }
+    }
+
+    public struct FocusError: Error, Equatable { public let text: String }
+
+    /// Exact (case-insensitive) name or ID beats substring; within a pass, agents beat workspaces beat tabs.
+    public static func resolveFocus(_ query: String, in targets: [FocusTarget]) -> Result<FocusTarget, FocusError> {
+        let q = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return .failure(FocusError(text: "error: say which workspace, tab or agent")) }
+        let passes: [(FocusTarget) -> Bool] = [
+            { $0.id.lowercased() == q || $0.label.lowercased() == q },
+            { $0.label.lowercased().contains(q) },
+        ]
+        for matches in passes {
+            for kind in FocusTarget.Kind.allCases {
+                let hits = targets.filter { $0.kind == kind && matches($0) }
+                if hits.count == 1 { return .success(hits[0]) }
+                if hits.count > 1 {
+                    let names = hits.map { "\($0.label) (\($0.id))" }.joined(separator: ", ")
+                    return .failure(FocusError(text: "ambiguous \(kind.rawValue): \(names); ask which one"))
+                }
+            }
+        }
+        let known = targets.filter { $0.kind != .tab }.map(\.label).joined(separator: ", ")
+        return .failure(FocusError(text: "error: nothing named \(query); known: \(known)"))
+    }
+
+    public static func focusTargets(agents: String, workspaces: String, tabs: String) -> [FocusTarget] {
+        func rows(_ json: String, _ key: String) -> [[String: Any]] {
+            let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+            return (obj?["result"] as? [String: Any])?[key] as? [[String: Any]] ?? []
+        }
+        let a = rows(agents, "agents").compactMap { r -> FocusTarget? in
+            guard let id = (r["name"] ?? r["pane_id"]) as? String else { return nil }
+            return FocusTarget(kind: .agent, id: id, label: id)
+        }
+        let w = rows(workspaces, "workspaces").compactMap { r -> FocusTarget? in
+            guard let id = r["workspace_id"] as? String else { return nil }
+            return FocusTarget(kind: .workspace, id: id, label: r["label"] as? String ?? id)
+        }
+        let t = rows(tabs, "tabs").compactMap { r -> FocusTarget? in
+            guard let id = r["tab_id"] as? String else { return nil }
+            return FocusTarget(kind: .tab, id: id, label: r["label"] as? String ?? id)
+        }
+        return a + w + t
     }
 }
