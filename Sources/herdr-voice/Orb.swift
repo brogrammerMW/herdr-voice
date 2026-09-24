@@ -2,7 +2,8 @@ import AppKit
 import QuartzCore
 
 /// Floating orb in the bottom-left corner of the active screen, above full-screen apps and on every Space.
-/// Inside, soft colour blobs drift on out-of-phase paths; voice energy speeds, spreads and swells them.
+/// Inside, soft colour blobs drift on out-of-phase paths. Two voices drive it differently:
+/// the developer's mic pushes the blobs and glow outward, the assistant's speech glows from the core.
 final class Orb {
     enum Mood {
         case muted, listening, speaking, working, offline
@@ -41,6 +42,7 @@ final class Orb {
     private let sphere = CALayer()
     private let base = CAGradientLayer()
     private let highlight = CAGradientLayer()
+    private let core = CAGradientLayer()
     private let blobs: [Blob] = [
         Blob(fx: (0.71, 0.23), fy: (0.53, 0.37), phase: 0.0, colorIndex: 0),
         Blob(fx: (0.47, 0.31), fy: (0.83, 0.19), phase: 2.1, colorIndex: 1),
@@ -49,7 +51,8 @@ final class Orb {
     ]
     private var mood: Mood?
     private var time: CGFloat = 0
-    private var energy: CGFloat = 0
+    private var micEnergy: CGFloat = 0
+    private var voiceEnergy: CGFloat = 0
     private var last = CACurrentMediaTime()
 
     init(onClick: @escaping () -> Void) {
@@ -83,6 +86,10 @@ final class Orb {
             blob.layer.compositingFilter = "screenBlendMode"
             sphere.addSublayer(blob.layer)
         }
+        Orb.radial(core, CGRect(x: d * 0.2, y: d * 0.2, width: d * 0.6, height: d * 0.6))
+        core.compositingFilter = "screenBlendMode"
+        core.opacity = 0
+        sphere.addSublayer(core)
         // Soft specular spot so it reads as a sphere, not a flat disc.
         Orb.radial(highlight, CGRect(x: d * 0.12, y: d * 0.5, width: d * 0.45, height: d * 0.4))
         highlight.colors = [NSColor.white.withAlphaComponent(0.35).cgColor, NSColor.white.withAlphaComponent(0).cgColor]
@@ -106,22 +113,23 @@ final class Orb {
         panel.setFrameOrigin(NSPoint(x: f.minX + 20, y: f.minY + 20))
     }
 
-    /// Called every frame with the current mood and a raw 0...1 loudness.
-    func update(_ newMood: Mood, level: Float) {
+    /// Called every frame with the current mood and raw 0...1 loudness of the mic and of the assistant's playback.
+    func update(_ newMood: Mood, mic: Float, voice: Float) {
         let now = CACurrentMediaTime()
         let dt = CGFloat(min(now - last, 0.1))
         last = now
         if newMood != mood { recolor(newMood) }
         let mood = newMood
 
-        // Fourth root lifts quiet speech; fast attack / slow release feels like breath, not flicker.
-        let target = CGFloat(pow(min(max(level * 6, 0), 1), 0.25))
-        energy += (target - energy) * (target > energy ? 0.35 : 0.05)
-        time += dt * (mood.idleSpeed + energy * 2.2)
+        micEnergy = Orb.smooth(micEnergy, toward: mic)
+        voiceEnergy = Orb.smooth(voiceEnergy, toward: voice)
+        let energy = max(micEnergy, voiceEnergy)
+        time += dt * (mood.idleSpeed + micEnergy * 2.2 + voiceEnergy * 1.4)
 
         let d = sphere.bounds.width
         let center = CGPoint(x: d / 2, y: d / 2)
-        let reach = d * (0.2 + energy * 0.14)
+        // The developer's voice pushes the blobs toward the rim; the assistant's pulls them in around the core.
+        let reach = d * (0.2 + micEnergy * 0.16 - voiceEnergy * 0.06)
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -136,11 +144,22 @@ final class Orb {
             blob.layer.setAffineTransform(CGAffineTransform(rotationAngle: t * 0.4 + CGFloat(i))
                 .scaledBy(x: scale * (1 + 0.12 * sin(t * 0.9)), y: scale * (1 - 0.12 * sin(t * 0.9))))
         }
+        let flutter = 1 + 0.06 * sin(time * 7)
+        let coreScale = (0.55 + voiceEnergy * 0.75) * flutter
+        core.setAffineTransform(CGAffineTransform(scaleX: coreScale, y: coreScale))
+        core.opacity = Float(min(voiceEnergy * 1.1, 0.95))
         let breathe = 0.03 * sin(time * 1.1)
         sphere.setAffineTransform(CGAffineTransform(scaleX: 1 + breathe + energy * 0.12, y: 1 + breathe + energy * 0.12))
-        glow.setAffineTransform(CGAffineTransform(scaleX: 0.72 + energy * 0.3 + breathe, y: 0.72 + energy * 0.3 + breathe))
+        let glowScale = 0.72 + micEnergy * 0.3 + voiceEnergy * 0.18 + breathe
+        glow.setAffineTransform(CGAffineTransform(scaleX: glowScale, y: glowScale))
         glow.opacity = Float(mood == .muted ? 0.25 : 0.6 + energy * 0.4)
         CATransaction.commit()
+    }
+
+    /// Fourth root lifts quiet speech; fast attack / slow release feels like breath, not flicker.
+    private static func smooth(_ current: CGFloat, toward level: Float) -> CGFloat {
+        let target = CGFloat(pow(min(max(level * 6, 0), 1), 0.25))
+        return current + (target - current) * (target > current ? 0.35 : 0.05)
     }
 
     /// Cross-fades to the new mood's palette.
@@ -151,6 +170,7 @@ final class Orb {
         CATransaction.setAnimationDuration(0.6)
         base.colors = [p[1].blended(withFraction: 0.35, of: .black)!.cgColor, p[1].blended(withFraction: 0.75, of: .black)!.cgColor]
         glow.colors = [p[0].withAlphaComponent(0.5).cgColor, p[1].withAlphaComponent(0).cgColor]
+        core.colors = [p[0].blended(withFraction: 0.7, of: .white)!.cgColor, p[0].withAlphaComponent(0).cgColor]
         for blob in blobs {
             let c = p[blob.colorIndex]
             blob.layer.colors = [c.withAlphaComponent(0.7).cgColor, c.withAlphaComponent(0).cgColor]

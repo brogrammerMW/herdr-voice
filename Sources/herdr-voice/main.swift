@@ -18,8 +18,16 @@ if args.contains("--orb-demo") {
     let orb = Orb {}
     let moods: [Orb.Mood] = [.listening, .speaking, .working, .muted, .offline]
     let start = Date()
+    var lastSpoken = -1
     Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
-        orb.update(moods[Int(Date().timeIntervalSince(start) / 4) % moods.count], level: audio.micLevel)
+        let phase = Int(Date().timeIntervalSince(start) / 4)
+        let mood = moods[phase % moods.count]
+        // Speaking phase plays a quiet syllable-like tone through the real playback path.
+        if mood == .speaking && phase != lastSpoken {
+            lastSpoken = phase
+            audio.play(base64: demoSpeech(seconds: 3.5), item: "demo-\(phase)")
+        }
+        orb.update(mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0)
     }
     do { try audio.start() } catch { log("✖ audio: \(error.localizedDescription)"); exit(1) }
     log("orb demo: talk to see it react; ctrl+c to quit")
@@ -44,15 +52,15 @@ let orb = Orb { session.toggleMute() }
 Hotkey.register { session.toggleMute() }
 
 Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
-    session.audio.tickLevels()
+    let a = session.audio
     let mood: Orb.Mood
-    var level: Float = 0
     if session.status == .disconnected { mood = .offline }
-    else if session.audio.isSpeaking { mood = .speaking; level = session.audio.outLevel }
+    else if a.isSpeaking { mood = .speaking }
     else if session.muted { mood = .muted }
-    else if !session.busyAgents.isEmpty && session.audio.micLevel < 0.02 { mood = .working }
-    else { mood = .listening; level = session.audio.micLevel }
-    orb.update(mood, level: level)
+    else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }
+    else { mood = .listening }
+    // Both directions at once: talking over the assistant shows your push and its core together.
+    orb.update(mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0)
 }
 
 do {
@@ -63,3 +71,17 @@ do {
 }
 signal(SIGINT) { _ in exit(0) }
 app.run()
+
+/// 220 Hz with a wandering pitch, amplitude-shaped into ~4 "syllables" a second, as base64 PCM16 24 kHz.
+func demoSpeech(seconds: Double) -> String {
+    let n = Int(seconds * Audio.rate)
+    var pcm = [Int16](repeating: 0, count: n)
+    var phase = 0.0
+    for i in 0..<n {
+        let t = Double(i) / Audio.rate
+        phase += 2 * .pi * (220 + 40 * sin(2 * .pi * 0.7 * t)) / Audio.rate
+        let syllable = max(0, sin(2 * .pi * 4 * t)) * (0.6 + 0.4 * sin(2 * .pi * 0.3 * t))
+        pcm[i] = Int16(0.12 * syllable * sin(phase) * 32767)
+    }
+    return pcm.withUnsafeBytes { Data($0) }.base64EncodedString()
+}

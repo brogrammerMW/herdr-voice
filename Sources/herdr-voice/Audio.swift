@@ -35,6 +35,11 @@ final class Audio {
         }
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: float24k)
+        // Measure the assistant's loudness as it is actually heard, not when chunks arrive (they arrive faster).
+        player.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buf, _ in
+            guard let self, let p = buf.floatChannelData?[0] else { return }
+            self.outLevel = self.rms(p, Int(buf.frameLength))
+        }
         try engine.start()
         player.play()
     }
@@ -75,7 +80,6 @@ final class Audio {
             let s = raw.bindMemory(to: Int16.self)
             for i in 0..<frames { dst[i] = Float(Int16(littleEndian: s[i])) / 32768 }
         }
-        outLevel = max(outLevel, rms(dst, frames))
         scheduledSamples += Int64(frames)
         player.scheduleBuffer(buf)
     }
@@ -92,15 +96,10 @@ final class Audio {
         let heardMs = Int(max(0, playedSamples - itemStartSample) * 1000 / Int64(Audio.rate))
         player.stop()
         player.play()
+        outLevel = 0
         scheduledSamples = 0
         itemStartSample = 0
         return heardMs
-    }
-
-    /// Decays the output level between chunks so the orb settles when speech stops.
-    func tickLevels() {
-        outLevel *= 0.92
-        if !isSpeaking { outLevel = 0 }
     }
 
     private func rms(_ p: UnsafePointer<Float>, _ n: Int) -> Float {
