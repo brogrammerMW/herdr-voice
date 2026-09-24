@@ -37,18 +37,54 @@ public enum HerdrTools {
 
     public typealias Runner = ([String]) -> String
 
-    /// Runs `herdr <args>` and returns stdout+stderr.
+    public typealias AsyncRunner = ([String], @escaping (String) -> Void) -> Void
+
+    /// Runs `herdr <args>` without holding a thread while it runs; `done` gets stdout+stderr.
+    public static let herdrAsync: AsyncRunner = { args, done in spawn("/usr/bin/env", ["herdr"] + args, done: done) }
+
+    /// Blocking form for the short tool calls, which already run off the main thread and finish in milliseconds.
     public static let herdr: Runner = { args in
+        let finished = DispatchSemaphore(value: 0)
+        var out = ""
+        herdrAsync(args) { out = $0; finished.signal() }
+        finished.wait()
+        return out
+    }
+
+    /// Spawns a process and collects stdout+stderr. A DispatchGroup joins "output reached EOF" and "process
+    /// exited", so no thread waits while it runs, and output is drained as it arrives, so a chatty process
+    /// can't fill the pipe and stall.
+    static func spawn(_ executable: String, _ arguments: [String], done: @escaping (String) -> Void) {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["herdr"] + args
+        p.executableURL = URL(fileURLWithPath: executable)
+        p.arguments = arguments
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
-        do { try p.run() } catch { return #"{"error":{"message":"herdr not found: \#(error)"}}"# }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
+        let lock = NSLock()
+        var data = Data()
+        let group = DispatchGroup()
+        group.enter() // output EOF
+        group.enter() // exit
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                group.leave()
+            } else {
+                lock.withLock { data.append(chunk) }
+            }
+        }
+        p.terminationHandler = { _ in group.leave() }
+        do {
+            try p.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            group.leave()
+            group.leave()
+            return done(#"{"error":{"message":"could not run \#(executable) \#(arguments.first ?? ""): \#(error)"}}"#)
+        }
+        group.notify(queue: .global()) { done(String(decoding: lock.withLock { data }, as: UTF8.self)) }
     }
 
     public struct Outcome {
@@ -103,12 +139,18 @@ public enum HerdrTools {
         }
     }
 
-    /// Blocks until the agent is idle, done or blocked, then describes it for the voice model.
-    public static func settle(_ target: String, run: Runner = herdr) -> String {
+    /// Waits until the agent is idle, done or blocked, then describes it for the voice model. The wait can last as
+    /// long as the agent's turn (up to an hour), so it holds no thread: each step continues from the previous
+    /// process's exit.
+    public static func settle(_ target: String, runAsync: @escaping AsyncRunner = herdrAsync, run: @escaping Runner = herdr,
+                              done: @escaping (String) -> Void) {
         // After answer_agent the agent may still show blocked for a moment; let it pick back up first.
-        _ = run(["agent", "wait", target, "--until", "working", "--timeout", "5000"])
-        let status = agentStatus(run(["agent", "wait", target, "--timeout", "3600000"])) ?? "unknown"
-        return "Agent \(target) is now \(status). Recent output:\n" + read(target, 60, run)
+        runAsync(["agent", "wait", target, "--until", "working", "--timeout", "5000"]) { _ in
+            runAsync(["agent", "wait", target, "--timeout", "3600000"]) { out in
+                let status = agentStatus(out) ?? "unknown"
+                done("Agent \(target) is now \(status). Recent output:\n" + read(target, 60, run))
+            }
+        }
     }
 
     public static func read(_ target: String, _ lines: Int, _ run: Runner) -> String {

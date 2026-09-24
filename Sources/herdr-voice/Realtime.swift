@@ -206,8 +206,7 @@ final class Realtime {
 
     private func watch(_ target: String) {
         guard busyAgents.insert(target).inserted else { return }
-        DispatchQueue.global().async {
-            let report = HerdrTools.settle(target)
+        HerdrTools.settle(target) { report in
             DispatchQueue.main.async {
                 self.busyAgents.remove(target)
                 log("← \(target) settled")

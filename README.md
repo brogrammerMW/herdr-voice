@@ -258,7 +258,8 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ## Privacy and safety
 
-- **What leaves your Mac.** While unmuted, mic audio streams to the provider you chose (xAI or OpenAI). When you ask
+- **What leaves your Mac.** While unmuted, mic audio streams to the provider you chose (xAI or OpenAI), in 20 ms
+  chunks. When you ask
   what an agent is doing, or when an agent finishes, the last lines of that agent's terminal are sent to the provider
   too. Don't use it near terminals showing secrets you wouldn't paste into a chat.
 - **Muting** stops audio from being sent, and clears whatever the provider had buffered.
@@ -302,7 +303,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 51 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 57 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -318,6 +319,7 @@ Sources/
     SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
     Activity.swift       # when the orb's thinking bubble shows
     WindowPin.swift      # which terminal window the orb pins to, and when it hides
+    MicRing.swift        # real-time-safe hand-off of mic samples from the audio thread
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
