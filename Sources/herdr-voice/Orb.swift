@@ -1,7 +1,8 @@
 import AppKit
 import QuartzCore
 
-/// Floating orb in the bottom-left corner of the active screen, above full-screen apps and on every Space.
+/// Floating orb. Normally pinned to the bottom-left of the terminal window showing Herdr (see `follow`);
+/// falls back to the bottom-left corner of the active screen, above full-screen apps and on every Space.
 /// Inside, soft colour blobs drift on out-of-phase paths. Two voices drive it differently:
 /// the developer's mic pushes the blobs and glow outward, the assistant's speech glows from the core.
 final class Orb {
@@ -168,6 +169,28 @@ final class Orb {
         layer.startPoint = CGPoint(x: 0.5, y: 0.5)
         layer.endPoint = CGPoint(x: 1, y: 1)
         layer.frame = frame
+    }
+
+    private var inCorner = true
+
+    /// Sits just inside the bottom-left of `window` (AppKit coordinates), or hides when nil.
+    func follow(_ window: NSRect?) {
+        inCorner = false
+        guard let w = window else {
+            if panel.isVisible { panel.orderOut(nil) }
+            return
+        }
+        let origin = NSPoint(x: w.minX + 4, y: w.minY + 4)
+        if panel.frame.origin != origin { panel.setFrameOrigin(origin) }
+        if !panel.isVisible { panel.orderFrontRegardless() }
+    }
+
+    /// Fallback when there is no Herdr window to follow: the screen corner, always visible.
+    func showInScreenCorner() {
+        guard !inCorner || !panel.isVisible else { return }
+        inCorner = true
+        place()
+        panel.orderFrontRegardless()
     }
 
     private func place() {

@@ -56,6 +56,15 @@ let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOI
 let orb = Orb { session.toggleMute() }
 Hotkey.registerMute { session.toggleMute() }
 
+// Pin the orb to the terminal window showing Herdr; HERDR_VOICE_ORB_PIN=0 keeps it in the screen corner.
+if env["HERDR_VOICE_ORB_PIN"] != "0" {
+    let tracker = WindowTracker()
+    Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+        let (hasHost, frame) = tracker.locate()
+        if hasHost { orb.follow(frame) } else { orb.showInScreenCorner() }
+    }
+}
+
 Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     let a = session.audio
     Hotkey.setStopKey(active: a.isSpeaking) { session.stopSpeech(reason: "Esc") }
