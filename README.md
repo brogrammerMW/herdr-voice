@@ -26,8 +26,9 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   answers their approval prompts when you say so, and switches your view to a workspace, tab or agent.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
   approval, the voice interrupts with a one- or two-sentence summary.
-- **Live orb.** A floating orb in the bottom-left corner, visible over every app and full-screen Space. Colour blobs
-  drift inside it; your voice pushes them outward, the assistant's voice lights a pulsing core. Click it to mute.
+- **Live orb, pinned to Herdr.** An orb sits in the bottom-left of the terminal window running Herdr and follows it
+  around. It only shows while that window is in front. Colour blobs drift inside it; your voice pushes them outward,
+  the assistant's voice lights a pulsing core. Click it to mute.
 - **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
   forge on?"), each one only after you approve it out loud.
 - **Summaries only, enforced.** Replies are one or two sentences with no code, paths, file names, URLs or diffs read
@@ -81,7 +82,7 @@ On first run macOS asks for microphone access for your terminal app; allow it. Y
 ● connecting to grok — speak any time, ⌥⌘M mutes, Esc stops speech
 ```
 
-and a blue orb appears in the bottom-left corner. Start talking. The pane shows a live transcript: what you said,
+and a blue orb appears in the bottom-left of your Herdr window. Start talking. The pane shows a live transcript: what you said,
 what the voice said, and every Herdr tool call it makes (`→`) and every agent that finishes (`←`).
 
 Quit with `Ctrl+C` in its pane.
@@ -128,6 +129,22 @@ time. A longer sentence that happens to contain "stop" ("stop the dev server") i
 interrupt. While muted, no mic audio is sent, but you still hear the voice, so muting is a good way to listen to a
 summary without being interrupted.
 
+### Where the orb shows
+
+The orb is pinned to the terminal window running Herdr (Terminal, iTerm, Ghostty, and so on), just inside its
+bottom-left corner, and follows it when you move or resize it. It hides when:
+
+- another app is in front,
+- another window of the same terminal is in front of Herdr's,
+- a different tab of that terminal is selected.
+
+herdr-voice finds that window without extra permissions. It walks up from itself (and from any running `herdr`
+client) to the terminal app, then picks the terminal window whose title mentions "herdr". If the terminal's titles
+can't be read, or never mention Herdr, it follows the terminal's front window instead.
+
+If no terminal is found (for example it isn't running under Herdr), or you set `HERDR_VOICE_ORB_PIN=0`, the orb goes
+back to the bottom-left of the screen and stays visible everywhere. `--orb-demo` always uses the screen corner.
+
 ### Orb states
 
 | Colour | Meaning |
@@ -155,6 +172,7 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
+| `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
 
 ### Shell commands (`run_shell`, opt-in)
 
@@ -282,7 +300,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 39 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, stop phrases
+swift test           # 47 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -297,11 +315,13 @@ Sources/
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
     Activity.swift       # when the orb's thinking bubble shows
+    WindowPin.swift      # which terminal window the orb pins to, and when it hides
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
     Audio.swift          # echo-cancelled mic capture and playback
     Orb.swift            # floating orb
+    WindowTracker.swift  # finds the Herdr window (process tree, window list) ten times a second
     Hotkey.swift         # global hotkeys (⌥⌘M, Esc while speaking)
 Tests/HerdrVoiceTests/
 ```
