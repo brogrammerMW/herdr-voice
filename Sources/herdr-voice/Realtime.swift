@@ -25,6 +25,17 @@ final class Realtime {
     private(set) var busyAgents = Set<String>()
     /// A response is being generated; `response.cancel` is only valid while this is true.
     private var responseActive = false
+    /// Set when the developer stops talking, until the reply starts; expires in case no reply comes.
+    private var awaitingReplySince: Date?
+    private var toolsRunning = 0
+
+    /// Something is actively working: the voice model processing (between your speech and its voice, or
+    /// between tool steps), a Herdr tool call running, or a coding agent busy with work you sent.
+    var thinking: Bool {
+        Activity.isThinking(awaitingReplySince: awaitingReplySince, now: Date(), responseActive: responseActive,
+                            speaking: audio.isSpeaking, droppingAudio: droppingAudio,
+                            toolsRunning: toolsRunning, busyAgents: busyAgents.count)
+    }
     /// Code-level enforcement of the speaking style for the reply being generated.
     private var policy = SpeechPolicy()
     /// One corrective retry per reply chain, so a model that keeps leaking can't loop.
@@ -138,6 +149,7 @@ final class Realtime {
             if !droppingAudio { audio.play(base64: b64, item: item) }
         case .responseCreated:
             responseActive = true
+            awaitingReplySince = nil
             droppingAudio = false
             // A run_shell approval question reads the command aloud on purpose.
             policy = SpeechPolicy(allowCode: ConfirmGate.shared.pendingAction?.hasPrefix("run_shell") == true)
@@ -151,8 +163,11 @@ final class Realtime {
             retriedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
+        case .speechStopped:
+            if !muted { awaitingReplySince = Date() }
         case .speechStarted:
             lastSpeechStart = Date()
+            awaitingReplySince = nil
             // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest.
             cutPlayback()
         case .functionCall(let callID, let name, let args):
@@ -161,6 +176,7 @@ final class Realtime {
             log("✖ \(msg)")
         case .responseDone:
             responseActive = false
+            awaitingReplySince = nil
         case .ignored:
             break
         }
@@ -173,9 +189,11 @@ final class Realtime {
         }
         // Speech start comes from the mic via server VAD, so an injected report can't fake it.
         let userInitiated = lastSpeechStart > lastReport
+        toolsRunning += 1
         DispatchQueue.global().async {
             let outcome = HerdrTools.call(name, arguments: args, userInitiated: userInitiated)
             DispatchQueue.main.async {
+                self.toolsRunning -= 1
                 self.sendRaw(["type": "conversation.item.create", "item": [
                     "type": "function_call_output", "call_id": callID, "output": outcome.output,
                 ]])
