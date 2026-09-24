@@ -5,6 +5,8 @@ import HerdrVoiceCore
 /// extra permission (sysctl for the process tree, CGWindowList for window bounds and, when readable, titles).
 final class WindowTracker {
     private var hosts = Set<Int32>()
+    /// The last app other than herdr-voice to be in front; herdr-voice itself never counts as "in front".
+    private var lastForeignFront: Int32?
     private var lastRefresh = Date.distantPast
 
     /// The Herdr window's frame in AppKit screen coordinates, or nil when the orb should be hidden.
@@ -16,7 +18,8 @@ final class WindowTracker {
             hosts = Self.findHosts()
         }
         guard !hosts.isEmpty else { return (false, nil) }
-        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        var front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if front == getpid() { front = lastForeignFront ?? hosts.first } else { lastForeignFront = front }
         guard let win = WindowPin.target(windows: Self.allWindows(), hosts: hosts, frontmost: front) else {
             return (true, nil)
         }
