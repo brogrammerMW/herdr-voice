@@ -138,6 +138,10 @@ summary without being interrupted.
 | Grey | Muted |
 | Red | Offline. Press `⌥⌘M` to reconnect |
 
+A small **thought bubble with pulsing dots** appears at the orb's bottom-right while something is working: the voice
+model processing what you said (or between tool steps), a Herdr tool call running, or a coding agent busy with work
+you sent. It disappears as soon as everything is idle or done, and never shows while the voice is speaking.
+
 ## Configuration
 
 Everything is set with environment variables (and one flag):
@@ -278,7 +282,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 36 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, stop phrases
+swift test           # 39 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, stop phrases
 swift build -c release
 ```
 
@@ -292,6 +296,7 @@ Sources/
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
+    Activity.swift       # when the orb's thinking bubble shows
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts

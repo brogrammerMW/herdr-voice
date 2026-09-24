@@ -28,7 +28,10 @@ if args.contains("--orb-demo") {
             audio.play(base64: demoSpeech(seconds: 3.5), item: "demo-\(phase)")
         }
         Hotkey.setStopKey(active: audio.isSpeaking) { _ = audio.interrupt(); log("⏹  stopped (Esc)") }
-        orb.update(mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0)
+        // Think for the last 1.5 s before each "speaking" phase, and throughout "agent working".
+        let t = Date().timeIntervalSince(start).truncatingRemainder(dividingBy: 4)
+        let thinking = mood == .working || (moods[(phase + 1) % moods.count] == .speaking && t > 2.5)
+        orb.update(mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0, thinking: thinking)
     }
     do { try audio.start() } catch { log("✖ audio: \(error.localizedDescription)"); exit(1) }
     log("orb demo: talk to see it react; ctrl+c to quit")
@@ -63,7 +66,8 @@ Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }
     else { mood = .listening }
     // Both directions at once: talking over the assistant shows your push and its core together.
-    orb.update(mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0)
+    orb.update(mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0,
+               thinking: session.status != .disconnected && session.thinking)
 }
 
 do {

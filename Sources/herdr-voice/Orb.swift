@@ -54,6 +54,9 @@ final class Orb {
     private var micEnergy: CGFloat = 0
     private var voiceEnergy: CGFloat = 0
     private var last = CACurrentMediaTime()
+    /// Thought bubble with pulsing dots at the orb's bottom-right, shown only while something is working.
+    private let bubble = CALayer()
+    private var thinking = false
 
     init(onClick: @escaping () -> Void) {
         let s = Orb.size
@@ -95,9 +98,69 @@ final class Orb {
         highlight.colors = [NSColor.white.withAlphaComponent(0.35).cgColor, NSColor.white.withAlphaComponent(0).cgColor]
         sphere.addSublayer(highlight)
 
+        buildBubble(in: root)
         panel.contentView = view
         place()
         panel.orderFrontRegardless()
+    }
+
+    /// About a fifth of the orb, overlapping the sphere's lower-right edge, with a small tail circle toward it.
+    private func buildBubble(in root: CALayer) {
+        let w = Orb.size / 5, h = w * 0.66
+        let right = Orb.size - Orb.sphereInset
+        bubble.frame = CGRect(x: right - w * 0.45, y: Orb.sphereInset - h * 0.55, width: w, height: h + 5)
+        bubble.opacity = 0
+        bubble.setAffineTransform(CGAffineTransform(scaleX: 0.6, y: 0.6))
+
+        let fill = NSColor(white: 0.1, alpha: 0.82).cgColor, edge = NSColor(white: 1, alpha: 0.35).cgColor
+        let body = CALayer()
+        body.frame = CGRect(x: 0, y: 0, width: w, height: h)
+        body.cornerRadius = h / 2
+        body.backgroundColor = fill
+        body.borderColor = edge
+        body.borderWidth = 0.5
+        let tail = CALayer()
+        tail.frame = CGRect(x: w * 0.12, y: h + 0.5, width: 4, height: 4)
+        tail.cornerRadius = 2
+        tail.backgroundColor = fill
+        tail.borderColor = edge
+        tail.borderWidth = 0.5
+        bubble.addSublayer(tail)
+        bubble.addSublayer(body)
+
+        // Classic typing indicator: three dots pulsing in turn.
+        let dot: CGFloat = h * 0.26, gap = dot * 0.75
+        let startX = (w - (dot * 3 + gap * 2)) / 2
+        for i in 0..<3 {
+            let d = CALayer()
+            d.frame = CGRect(x: startX + CGFloat(i) * (dot + gap), y: (h - dot) / 2, width: dot, height: dot)
+            d.cornerRadius = dot / 2
+            d.backgroundColor = NSColor.white.cgColor
+            let pulse = CAKeyframeAnimation(keyPath: "opacity")
+            pulse.values = [0.3, 1, 0.3]
+            let bob = CAKeyframeAnimation(keyPath: "transform.translation.y")
+            bob.values = [0, dot * 0.45, 0]
+            let group = CAAnimationGroup()
+            group.animations = [pulse, bob]
+            group.duration = 1.1
+            group.repeatCount = .infinity
+            group.beginTime = CACurrentMediaTime() + Double(i) * 0.18
+            group.fillMode = .backwards
+            d.add(group, forKey: "thinking")
+            body.addSublayer(d)
+        }
+        root.addSublayer(bubble)
+    }
+
+    /// Fades the bubble in with a small pop, or out.
+    private func setThinking(_ on: Bool) {
+        guard on != thinking else { return }
+        thinking = on
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(on ? 0.2 : 0.35)
+        bubble.opacity = on ? 1 : 0
+        bubble.setAffineTransform(on ? .identity : CGAffineTransform(scaleX: 0.6, y: 0.6))
+        CATransaction.commit()
     }
 
     private static func radial(_ layer: CAGradientLayer, _ frame: CGRect) {
@@ -113,8 +176,10 @@ final class Orb {
         panel.setFrameOrigin(NSPoint(x: f.minX + 20, y: f.minY + 20))
     }
 
-    /// Called every frame with the current mood and raw 0...1 loudness of the mic and of the assistant's playback.
-    func update(_ newMood: Mood, mic: Float, voice: Float) {
+    /// Called every frame with the current mood, raw 0...1 loudness of the mic and of the assistant's playback,
+    /// and whether anything is working (voice model processing, a tool call, or a coding agent).
+    func update(_ newMood: Mood, mic: Float, voice: Float, thinking: Bool) {
+        setThinking(thinking && newMood != .offline)
         let now = CACurrentMediaTime()
         let dt = CGFloat(min(now - last, 0.1))
         last = now

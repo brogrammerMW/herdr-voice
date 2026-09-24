@@ -7,6 +7,7 @@ public enum ServerEvent: Equatable {
     case assistantTranscriptDelta(String)
     case userTranscript(String)
     case speechStarted
+    case speechStopped
     case responseCreated
     case functionCall(callID: String, name: String, arguments: String)
     case responseDone
@@ -31,6 +32,8 @@ public enum ServerEvent: Equatable {
             return .userTranscript(obj["transcript"] as? String ?? "")
         case "input_audio_buffer.speech_started":
             return .speechStarted
+        case "input_audio_buffer.speech_stopped":
+            return .speechStopped
         case "response.function_call_arguments.done":
             return .functionCall(
                 callID: obj["call_id"] as? String ?? "",
