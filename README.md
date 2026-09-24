@@ -265,7 +265,10 @@ Herdr sets `HERDR_ENV=1` and your workspace and tab IDs in every pane it manages
 you and its commands go to whichever Herdr session is focused.
 
 When you send work, herdr-voice waits (in the background) until Herdr reports the agent as `idle`, `done` or `blocked`,
-reads the last lines of its terminal, and hands them to the voice model to summarize. That is what lets the voice
+reads the end of its terminal, and hands it to the voice model to summarize. Terminal text is mostly padding, borders,
+prompts and spinners, so it is condensed first: escape codes, box-drawing and spinner characters, blank and
+symbol-only lines are dropped, repeated lines are collapsed, and only the last 20 meaningful lines are sent. Smaller
+reports make the voice reply faster and keep its session context small. That is what lets the voice
 speak up on its own when an agent finishes.
 
 ## How it talks
@@ -333,7 +336,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 82 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, stop phrases
+swift test           # 85 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
 swift build -c release
 ```
 
