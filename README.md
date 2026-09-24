@@ -28,6 +28,8 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   approval, the voice interrupts with a one- or two-sentence summary.
 - **Live orb.** A floating orb in the bottom-left corner, visible over every app and full-screen Space. Colour blobs
   drift inside it; your voice pushes them outward, the assistant's voice lights a pulsing core. Click it to mute.
+- **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
+  forge on?"), each one only after you approve it out loud.
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
 - **Choice of provider and voice.** Grok (default) or OpenAI, and any of their voices: Eve, Rex, Ara, Sal, Leo, or a
   custom cloned voice on Grok.
@@ -103,6 +105,7 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "Close the forge workspace" | Asks you to confirm, then closes it after you say "yes" |
 | "Close the notes tab" | Same, for a tab |
 | "Remove the login-fix worktree" | Same, and it deletes that worktree's checkout (refuses if it has uncommitted changes) |
+| "What branch is the forge repo on?" (with `run_shell` on) | Proposes `git branch --show-current` in that folder, runs it after your yes, tells you the answer |
 | "Stop" / "quiet" / "never mind" | Stops talking right away, without replying |
 
 You can refer to agents, workspaces and tabs by name, ID, folder or terminal title. If a name matches more than one
@@ -144,6 +147,22 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI) | Voice ID, passed straight to the provider |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
+| `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
+
+### Shell commands (`run_shell`, opt-in)
+
+By default herdr-voice can only work through your Herdr agents. With `HERDR_VOICE_SHELL=1` it can also run shell
+commands itself, which is handy for quick checks where prompting an agent is overkill.
+
+- **Every command is approved by you, out loud.** The voice proposes the command (reading it out if it is short),
+  the exact command is printed in herdr-voice's pane as `$ ...`, and it only runs if the first thing you say is a
+  clear yes. The approval covers that exact command in that folder; the model can't swap in another one, and text
+  from an agent's terminal can't trigger one.
+- Runs with `zsh -c` as your user, in herdr-voice's folder or one you name (for example an agent's folder). There is no
+  input, stdout and stderr are merged, it stops after 60 seconds, and only the last 4,000 characters come back,
+  marked as untrusted.
+- It is your shell with your permissions: a command you approve can do anything you could. Prefer asking an agent
+  for real work; agents have their own review and permission steps.
 
 ### Voices
 
@@ -187,6 +206,7 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `focus` | `herdr workspace focus`, `herdr tab focus` or `herdr agent focus` |
 | `close_workspace` / `close_tab` | `herdr workspace close` / `herdr tab close` |
 | `remove_worktree` | `herdr worktree remove --workspace <id>` (never `--force`) |
+| `run_shell` (opt-in) | Not a Herdr command: `zsh -c <command>` in the chosen folder, after your spoken yes |
 
 Herdr sets `HERDR_ENV=1` and your workspace and tab IDs in every pane it manages. Run outside Herdr, herdr-voice warns
 you and its commands go to whichever Herdr session is focused.
@@ -213,6 +233,8 @@ speak up on its own when an agent finishes.
   and questions expire after 20 seconds. Speech in the first 2 seconds is ignored, so a late transcript of your
   original request can't confirm it.
 - **Outside Herdr** the close and remove tools are switched off.
+- **Shell access is off by default** and, when on, each command needs your yes for that exact command (see
+  [Shell commands](#shell-commands-run_shell-opt-in)). Its output is sent to the provider for the summary.
 - **The agents keep their own guardrails.** herdr-voice types into Claude Code or Codex; their permission prompts still
   apply.
 - **API keys** are read from the environment and only sent as the `Authorization` header to the provider.
@@ -225,6 +247,7 @@ speak up on its own when an agent finishes.
 - A spoken "stop" takes effect once your words are transcribed, so a word or two may still play first. `Esc` is
   immediate.
 - While the voice is talking, `Esc` goes to herdr-voice, not the app you are typing in.
+- `run_shell` stops the shell when it times out, but anything it started in the background keeps running.
 - No automatic reconnect. If the connection drops the orb turns red; press `⌥⌘M` to reconnect. Providers cap session
   length (OpenAI: 60 minutes).
 - If an agent finishes while the voice is still talking, its summary can be refused by the provider ("active
@@ -235,7 +258,7 @@ speak up on its own when an agent finishes.
 
 ```bash
 swift build          # debug build
-swift test           # 25 tests: event decoding, Herdr tools, focus, confirmations, prompt-injection gates, stop phrases
+swift test           # 30 tests: event decoding, Herdr tools, focus, confirmations, prompt-injection gates, shell, stop phrases
 swift build -c release
 ```
 
@@ -247,6 +270,7 @@ Sources/
     Herdr.swift          # tool schemas and herdr CLI calls, focus resolution
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
     Close.swift          # close/remove tools
+    Shell.swift          # opt-in run_shell tool
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts

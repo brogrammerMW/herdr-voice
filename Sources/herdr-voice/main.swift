@@ -48,6 +48,7 @@ if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }
 
+if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
 let orb = Orb { session.toggleMute() }
 Hotkey.registerMute { session.toggleMute() }
