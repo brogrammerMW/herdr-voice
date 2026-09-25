@@ -28,7 +28,10 @@ if args.contains("--orb-demo") {
     let moods: [Orb.Mood] = [.listening, .speaking, .working, .muted, .offline]
     let start = Date()
     var lastSpoken = -1
-    Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
+    audio.onSpeakingChanged = { speaking in
+        Hotkey.setStopKey(active: speaking) { _ = audio.interrupt(); log("⏹  stopped (Esc)") }
+    }
+    orb.run {
         let phase = Int(Date().timeIntervalSince(start) / 4)
         let mood = moods[phase % moods.count]
         // Speaking phase plays a quiet syllable-like tone through the real playback path.
@@ -36,11 +39,10 @@ if args.contains("--orb-demo") {
             lastSpoken = phase
             audio.play(base64: demoSpeech(seconds: 3.5), item: "demo-\(phase)")
         }
-        Hotkey.setStopKey(active: audio.isSpeaking) { _ = audio.interrupt(); log("⏹  stopped (Esc)") }
         // Think for the last 1.5 s before each "speaking" phase, and throughout "agent working".
         let t = Date().timeIntervalSince(start).truncatingRemainder(dividingBy: 4)
         let thinking = mood == .working || (moods[(phase + 1) % moods.count] == .speaking && t > 2.5)
-        orb.update(mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0, thinking: thinking)
+        return Orb.Frame(mood: mood, mic: audio.micLevel, voice: audio.isSpeaking ? audio.outLevel : 0, thinking: thinking)
     }
     do { try audio.start() } catch { log("✖ audio: \(error.localizedDescription)"); exit(1) }
     log("orb demo: talk to see it react; ctrl+c to quit")
@@ -85,9 +87,13 @@ if env["HERDR_VOICE_ORB_PIN"] != "0" {
     }
 }
 
-Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
+// Esc is grabbed only while the assistant is audible, switched on playback start/stop rather than polled.
+session.audio.onSpeakingChanged = { speaking in
+    Hotkey.setStopKey(active: speaking) { session.stopSpeech(reason: "Esc") }
+}
+
+orb.run {
     let a = session.audio
-    Hotkey.setStopKey(active: a.isSpeaking) { session.stopSpeech(reason: "Esc") }
     let mood: Orb.Mood
     // Offline while muted is deliberate (it reconnects when you unmute), so show muted, not an error.
     if session.status == .disconnected && !session.muted && !session.dormant { mood = .offline }
@@ -96,8 +102,8 @@ Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }
     else { mood = .listening }
     // Both directions at once: talking over the assistant shows your push and its core together.
-    orb.update(mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0,
-               thinking: session.status != .disconnected && session.thinking)
+    return Orb.Frame(mood: mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0,
+                     thinking: session.status != .disconnected && session.thinking)
 }
 
 do {

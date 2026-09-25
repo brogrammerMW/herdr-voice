@@ -385,6 +385,21 @@ about $3 to $5 per hour, even if you only talk for a few minutes of it. herdr-vo
 
 Set `HERDR_VOICE_STREAM=always` to stream continuously instead.
 
+## Performance
+
+Measured on an M4 Pro, idle and listening, orb pinned:
+
+| Part | Cost | Notes |
+|---|---|---|
+| macOS voice processing | ~12% of a core | Echo cancellation and noise suppression. About 5% while muted (bypassed), about 0.6% with `HERDR_VOICE_ECHO_CANCEL=0` |
+| Window tracker | ~1% with the Herdr terminal in front, ~0 otherwise | Background queue, 10 Hz with 20% leeway; no window queries while another app is in front |
+| Orb | 30 fps when idle, 60 fps while someone talks or something works, 0 while hidden | Display link in `.common` run loop mode instead of a timer |
+| Esc capture | event-driven | Grabbed and released when playback starts and stops |
+
+Left alone on purpose because they measured negligible: building the JSON for each 20 ms mic chunk, converting
+playback audio from Int16 to Float on the main thread, the speech policy re-scanning a short reply per transcript
+delta, the process scan (0.4 ms every 2 s), and `herdr` CLI calls (under 10 ms each).
+
 ## Troubleshooting
 
 | Symptom | Fix |
