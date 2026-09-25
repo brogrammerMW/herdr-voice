@@ -52,10 +52,17 @@ guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use openai or grok\n".utf8))
     exit(2)
 }
-guard let key = env[provider.keyEnv], !key.isEmpty else {
-    FileHandle.standardError.write(Data("set \(provider.keyEnv) to use \(provider.rawValue)\n".utf8))
+guard let apiKey = provider.apiKey(environment: env) else {
+    FileHandle.standardError.write(Data("""
+    no API key for \(provider.rawValue). Store it in the Keychain (you'll be prompted for it):
+        security add-generic-password -a "$USER" -s \(provider.keyEnv) -w
+    or set \(provider.keyEnv) in the environment.
+
+    """.utf8))
     exit(2)
 }
+let key = apiKey.value
+log("🔑 \(provider.keyEnv) from the \(apiKey.source.rawValue)") // where it came from, never the value
 if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }

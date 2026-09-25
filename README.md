@@ -1,5 +1,8 @@
 # herdr-voice
 
+I really like ChatGPT's voice agent and decided to create a version what would run native in Herdr.  Enjoy! 
+                                                                            - Marcus aka BrogrammerMW
+
 **Talk to the coding agents in your [Herdr](https://herdr.dev) panes, and hear them talk back.**
 
 herdr-voice is a small macOS add-on for Herdr. You speak; a realtime voice model (xAI Grok or OpenAI) understands
@@ -72,13 +75,14 @@ Start it **inside a Herdr pane**, so its commands target your session. A small p
 
 ```bash
 herdr pane split --current --direction down --no-focus    # optional: make a pane for it
-export XAI_API_KEY=xai-...                                  # or OPENAI_API_KEY
+security add-generic-password -a "$USER" -s XAI_API_KEY -w # once: stores your key in the Keychain (prompts for it)
 herdr-voice                                                 # or .build/release/herdr-voice
 ```
 
 On first run macOS asks for microphone access for your terminal app; allow it. You should see:
 
 ```text
+🔑 XAI_API_KEY from the Keychain
 ● connecting to grok — speak any time, ⌥⌘M mutes, Esc stops speech
 ```
 
@@ -167,8 +171,8 @@ Everything is set with environment variables (and one flag):
 | Variable | Default | Purpose |
 |---|---|---|
 | `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `grok` or `openai` |
-| `XAI_API_KEY` | | Required for Grok |
-| `OPENAI_API_KEY` | | Required for OpenAI |
+| `XAI_API_KEY` | | Grok key, if it isn't in the Keychain (see [API keys](#api-keys)) |
+| `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
 | `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI) | Voice ID, passed straight to the provider |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
@@ -190,6 +194,24 @@ commands itself, which is handy for quick checks where prompting an agent is ove
   marked as untrusted.
 - It is your shell with your permissions: a command you approve can do anything you could. Prefer asking an agent
   for real work; agents have their own review and permission steps.
+
+### API keys
+
+herdr-voice looks for the key in the **macOS Keychain first**, then in the environment variable. Keeping it in the
+Keychain means it survives logout and restart, works in every new Herdr pane without any shell setup, and never lands
+in your shell history (which is where `export XAI_API_KEY=...` typed at a prompt ends up).
+
+```bash
+security add-generic-password -a "$USER" -s XAI_API_KEY -w       # Grok; you'll be prompted for the key
+security add-generic-password -a "$USER" -s OPENAI_API_KEY -w    # OpenAI, if you use it
+security add-generic-password -U -a "$USER" -s XAI_API_KEY -w    # replace a key after rotating it
+security delete-generic-password -s XAI_API_KEY                  # remove it
+```
+
+The service name is the variable name. herdr-voice reads it through the same `security` tool, so there is no access
+prompt, not even after rebuilding. The key travels over a private pipe, and startup only logs where it came from
+(`🔑 XAI_API_KEY from the Keychain`), never the value. If you did export a key at a prompt before, remove it from
+`~/.zsh_history` and rotate it.
 
 ### Voices
 
@@ -279,7 +301,8 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   [Shell commands](#shell-commands-run_shell-opt-in)). Its output is sent to the provider for the summary.
 - **The agents keep their own guardrails.** herdr-voice types into Claude Code or Codex; their permission prompts still
   apply.
-- **API keys** are read from the environment and only sent as the `Authorization` header to the provider.
+- **API keys** are read from the Keychain (or the environment), never logged, and only sent as the `Authorization`
+  header to the provider.
 
 ## Limitations
 
@@ -304,7 +327,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 63 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 68 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, stop phrases
 swift build -c release
 ```
 
@@ -336,7 +359,7 @@ Tests/HerdrVoiceTests/
 | Symptom | Fix |
 |---|---|
 | `✖ audio: ...` on start | Allow microphone access for your terminal in System Settings → Privacy & Security → Microphone, then restart |
-| `set XAI_API_KEY to use grok` | Export the key in the shell that runs herdr-voice |
+| `no API key for grok` | Store it in the Keychain: `security add-generic-password -a "$USER" -s XAI_API_KEY -w` (or set `XAI_API_KEY`) |
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
 | `↻ …reconnecting` in the log | Normal: the session ended (idle or time limit) or the network dropped; it reconnects by itself (1 → 30 s backoff) |
 | `✖ …gave up after 8 tries` / red orb | Repeated failures, usually a wrong or revoked key or no network. Fix that, then press `⌥⌘M` |
