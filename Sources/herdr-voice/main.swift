@@ -79,7 +79,7 @@ Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     Hotkey.setStopKey(active: a.isSpeaking) { session.stopSpeech(reason: "Esc") }
     let mood: Orb.Mood
     // Offline while muted is deliberate (it reconnects when you unmute), so show muted, not an error.
-    if session.status == .disconnected && !session.muted { mood = .offline }
+    if session.status == .disconnected && !session.muted && !session.dormant { mood = .offline }
     else if a.isSpeaking { mood = .speaking }
     else if session.muted { mood = .muted }
     else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }

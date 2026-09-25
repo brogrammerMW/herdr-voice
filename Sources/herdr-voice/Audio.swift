@@ -31,8 +31,8 @@ final class Audio {
     private let float24k = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
     private var converter: AVAudioConverter?
 
-    /// Called on the mic queue every 20 ms with base64 PCM16 24 kHz mono.
-    var onMic: ((String) -> Void)?
+    /// Called on the mic queue every 20 ms with base64 PCM16 24 kHz mono and the chunk's rms level.
+    var onMic: ((String, Float) -> Void)?
     private(set) var micLevel: Float = 0
     private(set) var outLevel: Float = 0
 
@@ -104,7 +104,8 @@ final class Audio {
 
     /// On `micQueue`: level for the orb, 24 kHz PCM16 for the provider.
     private func send(_ chunk: AVAudioPCMBuffer, via out: AVAudioPCMBuffer) {
-        micLevel = rms(chunk.floatChannelData![0], Int(chunk.frameLength))
+        let level = rms(chunk.floatChannelData![0], Int(chunk.frameLength))
+        micLevel = level
         guard let converter else { return }
         out.frameLength = 0
         var fed = false
@@ -115,7 +116,7 @@ final class Audio {
             return chunk
         }
         let data = Data(bytes: out.int16ChannelData![0], count: Int(out.frameLength) * 2)
-        onMic?(data.base64EncodedString())
+        onMic?(data.base64EncodedString(), level)
     }
 
     /// While muted nothing from the mic is sent, so the echo canceller has no work worth doing. Playback keeps
