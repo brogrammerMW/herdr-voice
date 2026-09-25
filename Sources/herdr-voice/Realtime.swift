@@ -93,6 +93,8 @@ final class Realtime {
     private let micShared = OSAllocatedUnfairLock(initialState: MicShared())
     /// Closed on purpose because nobody was talking; any speech (or an agent report) reopens it.
     private(set) var dormant = false
+    /// A reconnect is already scheduled by the backoff.
+    private var retryPending = false
     private var quietTimer: DispatchSourceTimer?
 
     init(provider: Provider, key: String, voice: String) {
@@ -149,14 +151,16 @@ final class Realtime {
         DispatchQueue.main.async { log(line) }
     }
 
-    /// Speech while there's no session: reopen it (unless one is already on its way).
+    /// Speech while there's no session. Reopens a session that was closed on purpose (quiet), or tries once more
+    /// after giving up. Never while a retry is already scheduled: speech must not defeat the backoff, or every
+    /// sound during an outage would hammer the provider with connects.
     private func wake() {
-        guard status == .disconnected, !muted else { return }
+        guard status == .disconnected, !muted, !retryPending else { return }
         if dormant {
             dormant = false
+            attempts = 0
             log("🎙  heard you; reopening the session")
         }
-        attempts = 0
         connect()
     }
 
@@ -199,6 +203,7 @@ final class Realtime {
     }
 
     func connect() {
+        retryPending = false
         dormant = false
         micShared.withLock { $0.midTurn = false }
         connection += 1
@@ -223,6 +228,7 @@ final class Realtime {
 
     /// The first server event on a socket: the session is really up.
     private func sessionEstablished() {
+        log(hadSession ? "↻ reconnected" : "● connected")
         // Speech held while the session reopened goes first, before live audio starts flowing.
         flushHeldAudio()
         established = true
@@ -263,6 +269,7 @@ final class Realtime {
         }
         log(delay == 0 ? "↻ \(detail)" : "↻ \(detail); reconnecting in \(Int(delay)) s")
         let id = connection
+        retryPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.connection == id, self.status == .disconnected else { return }
             self.connect()
