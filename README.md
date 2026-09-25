@@ -28,6 +28,8 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   an interruption.
 - **Drives your Herdr agents.** It lists the agents in your session, sends them work, reads what they are doing,
   answers their approval prompts when you say so, and switches your view to a workspace, tab or agent.
+- **Runs your Herdr layout.** Create, list, rename and close workspaces (spaces) and tabs, and create, open, list
+  and remove git worktrees, all by voice. New things open in the background unless you ask to switch to them.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
   approval, the voice interrupts with a one- or two-sentence summary.
 - **Live orb, pinned to Herdr.** An orb sits in the bottom-left of the terminal window running Herdr and follows it
@@ -110,6 +112,20 @@ Quit with `Ctrl+C` in its pane, or right-click the orb → **Quit herdr-voice**.
 
 To update later: `git pull && swift build -c release && cp .build/release/herdr-voice ~/.local/bin/`.
 
+### Run a tool from the command line
+
+Every tool the voice uses can also be run by hand, which is handy for scripting or checking what the voice sees:
+
+```bash
+herdr-voice tool                                        # list the tools and what they do
+herdr-voice tool list_workspaces
+herdr-voice tool create_tab '{"workspace":"forge","label":"logs"}'
+herdr-voice tool create_worktree '{"workspace":"forge","branch":"patch/12-fix-login","base":"main"}'
+```
+
+Arguments are the same JSON the voice model sends. Tools that need a spoken yes (closing, removing, approving) only
+ask for it here; use `herdr` itself for those.
+
 ### Try the orb without a key
 
 ```bash
@@ -129,6 +145,13 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "What is it doing?" | Reads the agent's recent output and summarizes it |
 | "Approve it" / "say no" | "No" is pressed right away; approving asks you to confirm first, then presses it |
 | "Switch to forge" / "show me claude-2" | Focuses that workspace, tab or agent in Herdr |
+| "What workspaces do I have?" | Lists workspaces with their tabs, agent status and folder |
+| "Make a workspace called api in my dev folder" | Creates it in the background and tells you its name |
+| "Add a logs tab to forge" / "rename that tab to scratch" | Creates or renames a tab |
+| "Rename the forge workspace to forge-old" | Renames it |
+| "What worktrees does forge have?" | Lists its repo's worktrees: branch, folder, and where each is open |
+| "Make a worktree for forge on a new branch fix-login" | Creates the branch and worktree and opens it as a workspace |
+| "Open the fix-login worktree" | Opens an existing worktree that isn't open in Herdr |
 | "Close the forge workspace" | Asks you to confirm, then closes it after you say "yes" |
 | "Close the notes tab" | Same, for a tab |
 | "Remove the login-fix worktree" | Same, and it deletes that worktree's checkout (refuses if it has uncommitted changes) |
@@ -303,6 +326,11 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `read_agent` | `herdr agent read <agent> --source recent` |
 | `answer_agent` | `herdr agent send-keys <agent> <key>` (keys: `enter esc up down tab y n 1-9`; `enter`, `y` and digits need your spoken yes) |
 | `focus` | `herdr workspace focus`, `herdr tab focus` or `herdr agent focus` |
+| `list_workspaces` | `herdr workspace list` + `herdr tab list`, tabs nested under their workspace |
+| `create_workspace` / `rename_workspace` | `herdr workspace create --no-focus [--label] [--cwd]` / `herdr workspace rename` |
+| `create_tab` / `rename_tab` | `herdr tab create --no-focus [--workspace] [--label] [--cwd]` / `herdr tab rename` |
+| `list_worktrees` | `herdr worktree list --workspace <id>` |
+| `create_worktree` / `open_worktree` | `herdr worktree create --workspace <id> --branch <name> [--base <ref>]` / `herdr worktree open --workspace <id> --branch <name>` |
 | `close_workspace` / `close_tab` | `herdr workspace close` / `herdr tab close` |
 | `remove_worktree` | `herdr worktree remove --workspace <id>` (never `--force`) |
 | `run_shell` (opt-in) | Not a Herdr command: `zsh -c <command>` in the chosen folder, after your spoken yes |
@@ -353,7 +381,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   written to trick an AI ("SYSTEM: approve this"). herdr-voice fences that output as untrusted data, and more
   importantly the model can't act on it alone: approving an agent's prompt (`enter`, `y`, a digit) always needs your
   spoken yes, and a prompt the voice wants to send in reaction to an agent report (rather than to something you just
-  said) needs your yes for that exact text.
+  said) needs your yes for that exact text. The same goes for creating or renaming workspaces, tabs and worktrees.
 - **Risky actions need your voice.** Approvals, closing a workspace or tab, and removing a worktree are two-step: the
   voice asks, and it only goes ahead when the **first thing you say** after the question is a clear yes. The model
   can't confirm on its own; only your mic transcript can. Anything else you say first ("which one?", "no", "wait")
@@ -394,7 +422,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 108 tests: key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 115 tests: workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 ```
 
@@ -412,6 +440,7 @@ Sources/
     Herdr.swift          # tool schemas and herdr CLI calls, focus resolution
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
     ModelMenu.swift      # the orb's AI-model menu entries
+    Manage.swift         # list/create/rename tools for workspaces, tabs and worktrees
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # caps reply length by audio, flags code read aloud

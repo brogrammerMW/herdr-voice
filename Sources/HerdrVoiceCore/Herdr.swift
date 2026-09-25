@@ -10,7 +10,7 @@ public enum HerdrTools {
         ["type": "boolean", "description": "true only on the second call, after the developer said yes"]
 
     /// Tools offered to the voice model. `run_shell` is only offered when HERDR_VOICE_SHELL=1.
-    public static var schemas: [[String: Any]] { herdrSchemas + (shellEnabled ? [shellSchema] : []) }
+    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + (shellEnabled ? [shellSchema] : []) }
 
     static let herdrSchemas: [[String: Any]] = [
         fn("list_agents", "List coding agents running in Herdr panes with name, status, cwd and title.", [:], []),
@@ -132,6 +132,8 @@ public enum HerdrTools {
             guard shellEnabled else { return Outcome(output: "error: run_shell is disabled (set HERDR_VOICE_SHELL=1)", watch: nil) }
             return Outcome(output: runShell(args["command"] as? String ?? "", cwd: args["cwd"] as? String,
                                             confirmed: confirmed, gate), watch: nil)
+        case _ where manageTools.contains(name):
+            return Outcome(output: manage(name, args, run, gate, userInitiated: userInitiated), watch: nil)
         case "close_workspace", "close_tab", "remove_worktree":
             return Outcome(output: close(name, target, confirmed: args["confirmed"] as? Bool ?? false, run, gate), watch: nil)
         default:
@@ -260,7 +262,10 @@ public enum HerdrTools {
                 }
             }
         }
-        let known = targets.filter { $0.kind != .tab }.map(\.label).joined(separator: ", ")
+        // Tabs are mostly numbered, so they're only listed when nothing else was searched.
+        let named = targets.filter { $0.kind != .tab }
+        let known = named.isEmpty ? targets.map { "\($0.label) (\($0.id))" }.joined(separator: ", ")
+                                  : named.map(\.label).joined(separator: ", ")
         return .failure(FocusError(text: "error: nothing named \(query); known: \(known)"))
     }
 

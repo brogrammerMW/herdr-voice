@@ -19,6 +19,19 @@ if args.count > 1, args[1] == "setup" {
     exit(setupKey(for: provider) ? 0 : 1)
 }
 
+// herdr-voice tool [<name> ['<json arguments>']]: run one of the voice model's tools from the command line,
+// exactly as the voice would. Tools that need a spoken yes (closing, removing, approving) can't be confirmed here.
+if args.count > 1, args[1] == "tool" {
+    guard args.count > 2 else {
+        for schema in HerdrTools.schemas {
+            print("\(schema["name"] as? String ?? "")\n    \(schema["description"] as? String ?? "")")
+        }
+        exit(0)
+    }
+    print(HerdrTools.call(args[2], arguments: args.count > 3 ? args[3] : "{}").output)
+    exit(0)
+}
+
 // Whatever was in front when we were launched: normally the terminal running Herdr.
 let launchedFrom = NSWorkspace.shared.frontmostApplication
 let app = NSApplication.shared

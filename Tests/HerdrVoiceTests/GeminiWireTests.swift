@@ -3,7 +3,7 @@ import Testing
 @testable import HerdrVoiceCore
 
 private func msg(_ obj: [String: Any]) -> String {
-    String(decoding: try! JSONSerialization.data(withJSONObject: obj), as: UTF8.self)
+    String(decoding: try! JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]), as: UTF8.self)
 }
 private func dig(_ obj: Any?, _ path: String...) -> Any? {
     path.reduce(obj) { ($0 as? [String: Any])?[$1] }
