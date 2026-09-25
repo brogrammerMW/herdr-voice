@@ -12,7 +12,18 @@ final class Realtime {
     private let voice: String
     let audio = Audio()
     private var socket: URLSessionWebSocketTask?
-
+    /// The provider's wire protocol for the current connection (see Wire). Replaced on every connect.
+    private var wire: Wire
+    /// Gemini: resumes the previous session, context included, on the next connection.
+    private var resumeHandle: String?
+    /// Whether this connection resumed a session with its context (then no recap is needed).
+    private var resumedWithContext = false
+    /// Providers without explicit replies (Gemini) answer as soon as they get a tool response or a completed
+    /// text turn, so those wait here until the reply scheduler says a reply may start.
+    private var pendingOutputs: [ToolOutput] = []
+    private var pendingTexts: [String] = []
+    /// Gemini's goAway arrived while something was still being said: renew once it's done.
+    private var renewWhenIdle = false
     private(set) var status = Status.disconnected { didSet { syncSendGate() } }
     private(set) var muted = false {
         didSet {
@@ -73,7 +84,7 @@ final class Realtime {
     /// What was said, replayed into a renewed session so it still knows the conversation.
     private var recap = Recap()
     /// Agent reports that arrived while offline, delivered once the next session is up.
-    private var outbox: [[String: Any]] = []
+    private var outbox: [String] = []
     private var keepalive: DispatchSourceTimer?
     private var pongPending = false
 
@@ -98,6 +109,8 @@ final class Realtime {
         var lastSpeech = Date()
         /// Speech captured while the session was closed or reopening, sent once it's up (at most 10 s).
         var held: [String] = []
+        /// The current connection's wire, for encoding audio on the mic queue.
+        var wire: Wire?
     }
     private let micShared = OSAllocatedUnfairLock(initialState: MicShared())
     /// Closed on purpose because nobody was talking; any speech (or an agent report) reopens it.
@@ -110,6 +123,7 @@ final class Realtime {
         self.provider = provider
         self.key = key
         self.voice = voice
+        self.wire = provider.makeWire()
         audio.onMic = { [weak self] b64, level in self?.micChunk(b64, level: level) }
     }
 
@@ -132,7 +146,10 @@ final class Realtime {
         guard !chunks.isEmpty else { return }
         if mayStream.withLock({ $0 }) {
             if gated { micShared.withLock { $0.lastSpeech = Date() } }
-            chunks.forEach { sendRaw(["type": "input_audio_buffer.append", "audio": $0]) }
+            let wire = micShared.withLock { $0.wire }
+            chunks.forEach { chunk in wire?.encode(.appendAudio(chunk)).forEach(sendRaw) }
+            // The gate just closed: tell the provider the stream paused (Gemini ends the turn on it).
+            if wasOpen && !gate.isOpen { wire?.encode(.audioPaused).forEach(sendRaw) }
             return
         }
         // No session right now (closed while quiet, or reopening): keep the speech and bring the session back.
@@ -178,7 +195,7 @@ final class Realtime {
             defer { s.held.removeAll() }
             return s.held
         }
-        held.forEach { sendRaw(["type": "input_audio_buffer.append", "audio": $0]) }
+        held.forEach { send(.appendAudio($0)) }
     }
 
     /// Every 5 s: close a session nobody has talked to for `quietClose`, if nothing is speaking or running.
@@ -220,12 +237,18 @@ final class Realtime {
         established = false
         closeReason = nil
         status = .connecting
-        var req = URLRequest(url: provider.url)
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        let task = URLSession.shared.webSocketTask(with: req)
+        wire = provider.makeWire()
+        let newWire = wire
+        micShared.withLock { $0.wire = newWire }
+        pendingOutputs.removeAll()
+        pendingTexts.removeAll()
+        renewWhenIdle = false
+        let task = URLSession.shared.webSocketTask(with: provider.request(key: key))
         socket = task
         task.resume()
-        sendRaw(provider.sessionUpdate(instructions: voiceInstructions, voice: voice))
+        let handle = wire.capabilities.nativeResumption ? resumeHandle : nil
+        resumedWithContext = handle != nil
+        send(.setup(instructions: voiceInstructions, voice: voice, resumeHandle: handle))
         status = .live
         if hadSession || attempts > 0 {
             log("↻ reconnecting to \(provider.rawValue)")
@@ -244,14 +267,13 @@ final class Realtime {
         established = true
         flushHeldAudio() // anything that slipped in meanwhile
         attempts = 0
-        if hadSession, let context = recap.message {
-            sendRaw(["type": "conversation.item.create", "item": [
-                "type": "message", "role": "user", "content": [["type": "input_text", "text": context]],
-            ]])
+        // A session resumed with its context (Gemini) already remembers the conversation.
+        if hadSession, !resumedWithContext, let context = recap.message {
+            send(.userText(context, expectsReply: false))
         }
         hadSession = true
         guard !outbox.isEmpty else { return }
-        outbox.forEach(sendRaw)
+        outbox.forEach(addReplyText)
         outbox.removeAll()
         if replies.wantReply() { requestResponse() }
     }
@@ -266,7 +288,10 @@ final class Realtime {
         replies.reset()
         awaitingCreated = false
         awaitingReplySince = nil
-        if !established { attempts += 1 }
+        if !established {
+            attempts += 1
+            resumeHandle = nil // if a resumption was refused, the next attempt starts a fresh session
+        }
         // The provider closed a quiet session: nothing to reconnect for until someone speaks.
         if gated && reason == .sessionEnded && !muted {
             dormant = true
@@ -313,13 +338,13 @@ final class Realtime {
 
     /// Sends a conversation item that should get a spoken reply, or keeps it for the next session and makes sure
     /// one is coming: an agent report is worth reopening the session for, even while muted.
-    private func deliver(_ item: [String: Any]) {
+    private func deliver(_ text: String) {
         if status == .live && established {
-            sendRaw(item)
+            addReplyText(text)
             if replies.wantReply() { requestResponse() } // otherwise it joins the reply already on its way
             return
         }
-        outbox.append(item)
+        outbox.append(text)
         if status == .disconnected {
             attempts = 0
             connect()
@@ -358,14 +383,14 @@ final class Realtime {
         }
         muted.toggle()
         audio.setMuted(muted)
-        if muted { sendRaw(["type": "input_audio_buffer.clear"]) }
+        if muted { send(.clearInput) }
         log(muted ? "🔇 muted" : "🎙  listening")
     }
 
     /// Stops the assistant mid-sentence (Esc or a spoken "stop"): cancels generation and drops queued audio.
     func stopSpeech(reason: String) {
         guard responseActive || audio.isSpeaking else { return }
-        if responseActive { sendRaw(["type": "response.cancel"]) }
+        if responseActive { send(.cancelReply) }
         replies.reset()
         awaitingCreated = false
         droppingAudio = true
@@ -379,7 +404,7 @@ final class Realtime {
             break
         case .tooLong:
             // Stop generating; audio already queued finishes, so the cut lands near the end of sentence two.
-            if responseActive { sendRaw(["type": "response.cancel"]) }
+            if responseActive { send(.cancelReply) }
             replies.reset()
             awaitingCreated = false
             droppingAudio = true
@@ -388,12 +413,8 @@ final class Realtime {
             stopSpeech(reason: "was reading \(what) aloud")
             guard !retriedLeak else { return }
             retriedLeak = true
-            sendRaw(["type": "conversation.item.create", "item": [
-                "type": "message", "role": "user",
-                "content": [["type": "input_text", "text":
-                    "[policy] You started reading \(what) aloud and were cut off. Say it again as one or two plain "
-                    + "sentences with no code, paths, file names, URLs or diffs."]],
-            ]])
+            addReplyText("[policy] You started reading \(what) aloud and were cut off. Say it again as one or two plain "
+                + "sentences with no code, paths, file names, URLs or diffs.")
             if replies.wantReply() { requestResponse() }
         }
     }
@@ -403,7 +424,7 @@ final class Realtime {
         guard audio.isSpeaking else { return }
         let item = audio.currentItem
         let ms = audio.interrupt()
-        sendRaw(["type": "conversation.item.truncate", "item_id": item, "content_index": 0, "audio_end_ms": ms])
+        send(.truncate(itemID: item, audioEndMs: ms))
     }
 
     private func receive(_ task: URLSessionWebSocketTask) {
@@ -413,13 +434,15 @@ final class Realtime {
                 switch result {
                 case .success(let message):
                     if !self.established { self.sessionEstablished() }
-                    if case .string(let text) = message { self.handle(ServerEvent.decode(text)) }
+                    if case .string(let text) = message { self.wire.decode(text).forEach(self.handle) }
                     self.receive(task)
                 case .failure(let err):
                     let reason = self.closeReason ?? .dropped
+                    // Some providers (Gemini) explain a refused or closed connection in the close frame.
+                    let said = task.closeReason.map { String(decoding: $0, as: UTF8.self) }.flatMap { $0.isEmpty ? nil : $0 }
                     self.connectionLost(task, reason: reason,
                                         detail: reason == .sessionEnded ? "provider ended the session (idle or time limit)"
-                                                                      : "disconnected: \(err.localizedDescription)")
+                                                                      : "disconnected: \(said ?? err.localizedDescription)")
                 }
             }
         }
@@ -478,23 +501,85 @@ final class Realtime {
             awaitingReplySince = nil
             // Tool results from this turn are answered together, in one reply, once it's finished.
             if replies.responseDone() { requestResponse() }
+            if renewWhenIdle && !replies.responseActive && replies.callsInFlight == 0 { renewConnection() }
+        case .resumptionHandle(let handle):
+            resumeHandle = handle
+        case .sessionEnding:
+            // Gemini closes connections after about 10 minutes and warns first. Renew now (resuming the session
+            // with its context), or right after whatever is being said or run finishes.
+            if responseActive || audio.isSpeaking || replies.callsInFlight > 0 {
+                renewWhenIdle = true
+            } else {
+                renewConnection()
+            }
         case .ignored:
             break
         }
     }
 
+    /// Replaces the connection before the provider drops it, resuming the same session where supported.
+    private func renewConnection() {
+        renewWhenIdle = false
+        guard status == .live, let old = socket else { return }
+        log("↻ renewing the connection (the provider limits how long one lasts)")
+        socket = nil // its close must not count as a failure
+        old.cancel(with: .normalClosure, reason: nil)
+        keepalive?.cancel()
+        keepalive = nil
+        status = .disconnected
+        replies.reset()
+        awaitingCreated = false
+        connect()
+    }
+
     private func requestResponse() {
-        awaitingCreated = true
-        sendRaw(["type": "response.create"])
+        if wire.capabilities.explicitReplies {
+            awaitingCreated = true
+            send(.requestReply)
+            return
+        }
+        // Gemini answers by itself once it gets what it's waiting for: all the tool results of the turn, and/or a
+        // completed text turn. Sending them now is the reply request.
+        var sent = false
+        if !pendingOutputs.isEmpty {
+            send(.toolOutputs(pendingOutputs))
+            pendingOutputs.removeAll()
+            sent = true
+        }
+        if !pendingTexts.isEmpty {
+            send(.userText(pendingTexts.joined(separator: "\n\n"), expectsReply: true))
+            pendingTexts.removeAll()
+            sent = true
+        }
+        // Nothing went out, so no reply will start: release the scheduler rather than wait forever.
+        if !sent { _ = replies.responseDone() }
+    }
+
+    /// Text that should get a spoken reply: sent now where replies are requested separately, otherwise held until
+    /// the scheduler allows a reply (sending a completed turn is what makes Gemini answer).
+    private func addReplyText(_ text: String) {
+        if wire.capabilities.explicitReplies {
+            send(.userText(text, expectsReply: true))
+        } else {
+            pendingTexts.append(text)
+        }
+    }
+
+    /// A tool call's result: sent at once where replies are requested separately (as before the wire layer),
+    /// otherwise collected so every result of the turn goes back in one tool response.
+    private func addToolOutput(_ output: ToolOutput) {
+        if wire.capabilities.explicitReplies {
+            send(.toolOutputs([output]))
+        } else {
+            pendingOutputs.append(output)
+        }
     }
 
     private func runTool(callID: String, name: String, args: String) {
         guard deduper.admit(name: name, arguments: args) else {
             log("⤫ \(name) repeated within seconds; not run again")
-            sendRaw(["type": "conversation.item.create", "item": [
-                "type": "function_call_output", "call_id": callID,
-                "output": "Duplicate of a call made moments ago; it was not run again. Don't repeat calls.",
-            ]])
+            addToolOutput(ToolOutput(callID: callID, name: name,
+                                     output: "Duplicate of a call made moments ago; it was not run again. Don't repeat calls."))
             replies.callStarted()
             if replies.callFinished() { requestResponse() }
             return
@@ -515,9 +600,7 @@ final class Realtime {
                 if let target = outcome.watch { self.watch(target) }
                 // A result for a call from a session that has since closed has nowhere to go.
                 guard self.connection == id, self.status == .live else { return }
-                self.sendRaw(["type": "conversation.item.create", "item": [
-                    "type": "function_call_output", "call_id": callID, "output": outcome.output,
-                ]])
+                self.addToolOutput(ToolOutput(callID: callID, name: name, output: outcome.output))
                 // One reply once every call from this turn has answered, not one per call.
                 if self.replies.callFinished() { self.requestResponse() }
             }
@@ -531,16 +614,17 @@ final class Realtime {
                 self.busyAgents.remove(target)
                 log("← \(target) settled")
                 self.lastReport = Date()
-                self.deliver(["type": "conversation.item.create", "item": [
-                    "type": "message", "role": "user",
-                    "content": [["type": "input_text", "text": "[herdr] " + report]],
-                ]])
+                self.deliver("[herdr] " + report)
             }
         }
     }
 
     private static func field(_ json: String, _ key: String) -> String? {
         (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?[key] as? String
+    }
+
+    private func send(_ command: WireCommand) {
+        wire.encode(command).forEach(sendRaw)
     }
 
     private func sendRaw(_ obj: [String: Any]) {

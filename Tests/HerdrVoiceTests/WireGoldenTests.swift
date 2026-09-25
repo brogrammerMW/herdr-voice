@@ -38,3 +38,41 @@ func setupGolden(provider: Provider, expected: String) {
 func decodeGolden(json: String, expected: ServerEvent) {
     #expect(ServerEvent.decode(json) == expected)
 }
+
+// The exact messages the pre-refactor Realtime.swift built inline (main b72be42), one per command.
+private func json(_ obj: [String: Any]) -> String {
+    String(decoding: try! JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]), as: UTF8.self)
+}
+
+@Test("OpenAI/xAI commands encode exactly as the shipping build sent them", arguments: [Provider.openai, Provider.grok])
+func commandGoldens(provider: Provider) {
+    let wire = OpenAIRealtimeWire(provider: provider)
+    let cases: [(WireCommand, [[String: Any]])] = [
+        (.appendAudio("QUJD"), [["type": "input_audio_buffer.append", "audio": "QUJD"]]),
+        (.clearInput, [["type": "input_audio_buffer.clear"]]),
+        (.audioPaused, []),
+        (.userText("[herdr] done", expectsReply: true), [["type": "conversation.item.create", "item": [
+            "type": "message", "role": "user", "content": [["type": "input_text", "text": "[herdr] done"]]]]]),
+        (.userText("[context] recap", expectsReply: false), [["type": "conversation.item.create", "item": [
+            "type": "message", "role": "user", "content": [["type": "input_text", "text": "[context] recap"]]]]]),
+        (.toolOutputs([ToolOutput(callID: "c1", name: "focus", output: "focused")]), [["type": "conversation.item.create",
+            "item": ["type": "function_call_output", "call_id": "c1", "output": "focused"]]]),
+        (.requestReply, [["type": "response.create"]]),
+        (.cancelReply, [["type": "response.cancel"]]),
+        (.truncate(itemID: "i9", audioEndMs: 1234), [["type": "conversation.item.truncate", "item_id": "i9",
+                                                      "content_index": 0, "audio_end_ms": 1234]]),
+        (.setup(instructions: "INSTR", voice: "VOICE", resumeHandle: "ignored"),
+         [provider.sessionUpdate(instructions: "INSTR", voice: "VOICE")]),
+    ]
+    for (command, expected) in cases {
+        #expect(wire.encode(command).map(json) == expected.map(json), "\(command)")
+    }
+    #expect(wire.capabilities == WireCapabilities(explicitReplies: true, nativeResumption: false))
+}
+
+@Test("OpenAI/xAI connect with the same bearer header as before", arguments: [Provider.openai, Provider.grok])
+func requestGolden(provider: Provider) {
+    let request = provider.request(key: "k-123")
+    #expect(request.url == provider.url)
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer k-123")
+}
