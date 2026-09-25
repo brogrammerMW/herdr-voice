@@ -434,7 +434,16 @@ final class Realtime {
                 switch result {
                 case .success(let message):
                     if !self.established { self.sessionEstablished() }
-                    if case .string(let text) = message { self.wire.decode(text).forEach(self.handle) }
+                    let text: String? = switch message {
+                    case .string(let t): t
+                    case .data(let d): WireFrame.text(d) // Gemini sends its JSON as binary frames
+                    @unknown default: nil
+                    }
+                    if let text {
+                        let events = self.wire.decode(text)
+                        if self.debugEvents { self.logEvents(events) }
+                        events.forEach(self.handle)
+                    }
                     self.receive(task)
                 case .failure(let err):
                     let reason = self.closeReason ?? .dropped
@@ -621,6 +630,17 @@ final class Realtime {
 
     private static func field(_ json: String, _ key: String) -> String? {
         (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?[key] as? String
+    }
+
+    /// HERDR_VOICE_DEBUG_EVENTS=1: log every provider event except audio, to diagnose a provider.
+    private let debugEvents = ProcessInfo.processInfo.environment["HERDR_VOICE_DEBUG_EVENTS"] == "1"
+    private func logEvents(_ events: [ServerEvent]) {
+        for e in events {
+            if case .audioDelta = e { continue }
+            // A resumption handle can reopen the session for 2 hours: never print it.
+            if case .resumptionHandle = e { log("·  resumptionHandle(<masked>)"); continue }
+            log("·  \(e)".prefix(160).description)
+        }
     }
 
     private func send(_ command: WireCommand) {

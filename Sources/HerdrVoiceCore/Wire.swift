@@ -51,3 +51,9 @@ public protocol Wire: AnyObject {
     func encode(_ command: WireCommand) -> [[String: Any]]
     func decode(_ text: String) -> [ServerEvent]
 }
+
+/// WebSocket frames to text. OpenAI and xAI send JSON as text frames; Gemini Live sends it as binary frames, which
+/// were silently dropped before (the session connected, then never heard a transcript or reply).
+public enum WireFrame {
+    public static func text(_ data: Data) -> String? { String(data: data, encoding: .utf8) }
+}

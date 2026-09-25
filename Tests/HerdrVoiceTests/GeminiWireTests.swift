@@ -136,3 +136,10 @@ private func dig(_ obj: Any?, _ path: String...) -> Any? {
     let afterSecond = replies.callFinished()
     #expect(!afterFirst && afterSecond)
 }
+
+@Test func geminiBinaryFramesDecodeLikeTextFrames() {
+    // Gemini delivers JSON in binary WebSocket frames; they must reach the decoder, not be dropped.
+    let frame = Data(#"{"serverContent":{"outputTranscription":{"text":"Yes, I can hear you."}}}"#.utf8)
+    let text = WireFrame.text(frame)
+    #expect(text.map { GeminiLiveWire().decode($0) } == [.responseCreated, .assistantTranscriptDelta("Yes, I can hear you.")])
+}
