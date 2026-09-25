@@ -1,0 +1,40 @@
+# herdr-voice as a Herdr plugin: https://herdr.dev/docs/plugins/
+id = "brogrammermw.herdr-voice"
+name = "herdr-voice"
+version = "1.0.0"
+min_herdr_version = "0.9.0"
+description = "Talk to your Herdr agents: realtime voice (Grok, OpenAI or Gemini) that drives Claude Code and Codex panes, with a floating orb"
+platforms = ["macos"]
+
+# Needs Swift 5.10+ (Xcode or the Command Line Tools). The first build takes a minute or two.
+[[build]]
+command = ["swift", "build", "-c", "release"]
+
+# The voice itself: a split pane showing the live transcript. Closing the pane stops it.
+[[panes]]
+id = "voice"
+title = "herdr-voice"
+placement = "split"
+command = [".build/release/herdr-voice"]
+
+# Store an API key in the macOS Keychain (hidden input).
+[[panes]]
+id = "setup"
+title = "herdr-voice setup"
+placement = "popup"
+width = "70%"
+height = 16
+command = [".build/release/herdr-voice", "setup"]
+
+# Opens the voice pane below the current one; bind it to a key (see the README).
+[[actions]]
+id = "start"
+title = "Start voice"
+contexts = ["workspace"]
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin brogrammermw.herdr-voice --entrypoint voice --placement split --direction down --no-focus"]
+
+[[actions]]
+id = "setup"
+title = "Set up an API key"
+contexts = ["workspace"]
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin brogrammermw.herdr-voice --entrypoint setup"]

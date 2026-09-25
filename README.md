@@ -59,10 +59,51 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 |---|---|
 | macOS | 14 Sonoma or later (developed on macOS 26) |
 | Swift | 5.10 or later: Xcode, or the Xcode Command Line Tools (`xcode-select --install`) |
-| Herdr | Tested with 0.9.0. `herdr` must be on your `PATH` |
+| Herdr | 0.9.0 or later |
 | API key | At least one of: an [xAI](https://console.x.ai) key (`XAI_API_KEY`), an [OpenAI](https://platform.openai.com) key (`OPENAI_API_KEY`), or a [Google AI Studio](https://aistudio.google.com) key (`GEMINI_API_KEY`) |
 
-## Quick start
+## Install as a Herdr plugin (recommended)
+
+herdr-voice is a [Herdr plugin](https://herdr.dev/docs/plugins/). Install it from GitHub; Herdr shows what it will run,
+then builds it (a minute or two the first time):
+
+```bash
+herdr plugin install brogrammerMW/herdr-voice
+```
+
+Then, inside Herdr:
+
+1. **Add your API key:** `herdr plugin action invoke setup --plugin brogrammermw.herdr-voice` opens a small popup that
+   asks for it (hidden) and stores it in your macOS Keychain. Grok is the default; to use OpenAI or Gemini, set
+   `HERDR_VOICE_PROVIDER` in the settings file below, or run `.build/release/herdr-voice setup openai` from the
+   plugin's folder.
+2. **Start the voice:** `herdr plugin action invoke start --plugin brogrammermw.herdr-voice` opens it in a pane below
+   the current one. Allow microphone access when macOS asks. Close that pane to stop it.
+3. **Give it a key** (optional), in Herdr's `config.toml`:
+
+   ```toml
+   [[keys.command]]
+   key = "prefix+v"
+   type = "plugin_action"
+   command = "brogrammermw.herdr-voice.start"
+   description = "start herdr-voice"
+   ```
+
+**Settings** live in `config.env` in the plugin's config folder (`herdr plugin config-dir brogrammermw.herdr-voice`),
+created on first start with every option commented out. It takes the `HERDR_VOICE_*` settings from
+[Configuration](#configuration), one `NAME=value` per line; restart the voice to apply them. API keys are refused
+there on purpose: they belong in the Keychain.
+
+**Before you install,** know what it does (Herdr doesn't review plugins): it builds with `swift build`, listens to
+your microphone while unmuted, streams your speech to the AI provider you chose, reads your agents' terminals to
+summarize them, and runs `herdr` commands in your session. See [Privacy and safety](#privacy-and-safety).
+Only one copy runs at a time; starting a second one refuses with "already running". The orb is herdr-voice's own
+macOS window, not a Herdr surface, so it floats over the Herdr window rather than inside it.
+
+To update, reinstall (`herdr plugin install brogrammerMW/herdr-voice` again); to remove,
+`herdr plugin uninstall brogrammermw.herdr-voice`.
+
+## Quick start without the plugin
 
 Three steps. The first build takes a minute or two.
 
@@ -221,7 +262,9 @@ you sent. It disappears as soon as everything is idle or done, and never shows w
 
 ## Configuration
 
-Everything is set with environment variables (and one flag):
+Everything is set with environment variables (and one flag). Running as a plugin, put the same `HERDR_VOICE_*`
+lines in the plugin's `config.env` instead (see [Install as a Herdr plugin](#install-as-a-herdr-plugin-recommended));
+an environment variable set some other way still wins.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -451,9 +494,13 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 127 tests: starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 131 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
+herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
+
+The plugin manifest is `herdr-plugin.toml`. Bump its `version` for each release, and keep `min_herdr_version` at the
+oldest Herdr that has every command herdr-voice uses.
 
 ```text
 Sources/
@@ -472,6 +519,7 @@ Sources/
     Manage.swift         # list/create/rename tools for workspaces, tabs and worktrees
     StartAgent.swift     # start_agent: make a worktree, tab or workspace and start Claude or Codex in it
     Panes.swift          # list, read and watch any pane
+    PluginConfig.swift   # config.env settings for the plugin, and the one-copy-at-a-time lock
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # caps reply length by audio, flags code read aloud
@@ -540,3 +588,7 @@ delta, the process scan (0.4 ms every 2 s), and `herdr` CLI calls (under 10 ms e
 | `⚠ not inside a Herdr pane` | Start it from a Herdr pane so it controls the right session |
 | The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud (and make sure `HERDR_VOICE_ECHO_CANCEL` isn't `0`) |
 | herdr-voice uses more CPU than you'd like | Most of it is macOS voice processing (about 12% of a core). With headphones, set `HERDR_VOICE_ECHO_CANCEL=0` (about 1% instead); otherwise mute when you aren't talking (about 5%) |
+
+## License
+
+[MIT](LICENSE)
