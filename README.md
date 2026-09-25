@@ -505,7 +505,8 @@ swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
 
-The launch videos in `assets/` (square for this README, 16:9 with an original house track for YouTube and X) are
+The launch videos in `assets/` (square for this README; 16:9 for YouTube and X and 9:16 for Shorts, Reels and TikTok, both with an original house
+track) are
 drawn and scored in code; `tools/launch-video/make.sh` rebuilds them (needs ffmpeg and `brew install webp`).
 
 The plugin manifest is `herdr-plugin.toml`. Bump its `version` for each release, and keep `min_herdr_version` at the

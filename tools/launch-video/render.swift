@@ -1,15 +1,16 @@
-// Renders the herdr-voice launch video frames, 15 s at 30 fps: 1080x1080 by default, 1920x1080 with --wide.
-// Usage: render <outdir> [--wide] [frame]   (see make.sh)
+// Renders the herdr-voice launch video frames, 15 s at 30 fps: 1080x1080 by default, 1920x1080 with --wide,
+// 1080x1920 with --tall. Usage: render <outdir> [--wide | --tall] [frame]   (see make.sh)
 import AppKit
 
 var cli = Array(CommandLine.arguments.dropFirst())
-let wide = cli.contains("--wide")
-cli.removeAll { $0 == "--wide" }
-let W: CGFloat = wide ? 1920 : 1080, H: CGFloat = 1080, FPS = 30.0, DURATION = 15.0
+let wide = cli.contains("--wide"), tall = cli.contains("--tall")
+cli.removeAll { $0 == "--wide" || $0 == "--tall" }
+let W: CGFloat = wide ? 1920 : 1080, H: CGFloat = tall ? 1920 : 1080, FPS = 30.0, DURATION = 15.0
 let out = cli[0]
 let only = cli.count > 1 ? Int(cli[1]) : nil
 
-/// Where things go: square stacks headline, orb and card; wide puts the headline and orb left, the card right.
+/// Where things go: square puts the orb beside the headline and the card below; wide puts the headline and orb left
+/// and the card right; tall stacks headline, orb and card down the screen.
 struct Layout {
     let head: CGPoint          // headline origin
     let orb: CGPoint, orbR: CGFloat
@@ -20,7 +21,16 @@ struct Layout {
     let install: CGRect, footer: CGPoint
     let opener: CGPoint
 }
-let L: Layout = wide
+let L: Layout = tall
+    ? Layout(head: CGPoint(x: 64, y: 330), orb: CGPoint(x: 540, y: 900), orbR: 150,
+             card: CGRect(x: 64, y: 1200, width: 952, height: 400),
+             chips: [CGPoint(x: 64, y: 190), CGPoint(x: 640, y: 250), CGPoint(x: 96, y: 1100), CGPoint(x: 620, y: 1200), CGPoint(x: 330, y: 1420)],
+             chipNote: CGPoint(x: 64, y: 1700),
+             endKicker: CGPoint(x: 64, y: 420), endHead: CGPoint(x: 64, y: 460), endSize: 170,
+             endOrb: CGPoint(x: 540, y: 1100), endOrbR: 180,
+             install: CGRect(x: 64, y: 1420, width: 952, height: 84), footer: CGPoint(x: 64, y: 1534),
+             opener: CGPoint(x: 64, y: 700))
+    : wide
     ? Layout(head: CGPoint(x: 120, y: 250), orb: CGPoint(x: 330, y: 760), orbR: 130,
              card: CGRect(x: 1000, y: 330, width: 800, height: 420),
              chips: [CGPoint(x: 1180, y: 150), CGPoint(x: 1560, y: 250), CGPoint(x: 1120, y: 620), CGPoint(x: 1500, y: 720), CGPoint(x: 1280, y: 880)],
