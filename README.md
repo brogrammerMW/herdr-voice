@@ -123,6 +123,7 @@ thing, the voice asks which one you mean instead of guessing.
 | Control | Action |
 |---|---|
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
+| Right-click (or control-click) the orb | Menu with **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
 | Talk over the voice | Stop it and listen to you |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |

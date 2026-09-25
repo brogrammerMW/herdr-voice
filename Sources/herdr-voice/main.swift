@@ -53,7 +53,11 @@ if env["HERDR_ENV"] != "1" {
 
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
-let orb = Orb { session.toggleMute() }
+let orb = Orb(onClick: { session.toggleMute() }, onQuit: {
+    session.shutdown()
+    // A moment for the WebSocket close frame to go out.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+})
 Hotkey.registerMute { session.toggleMute() }
 
 // Pin the orb to the terminal window showing Herdr; HERDR_VOICE_ORB_PIN=0 keeps it in the screen corner.

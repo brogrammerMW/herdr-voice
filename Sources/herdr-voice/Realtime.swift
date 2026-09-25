@@ -76,6 +76,14 @@ final class Realtime {
         mayStream.withLock { $0 = allowed }
     }
 
+    /// Closes the provider session cleanly so billing stops at once; call before exiting.
+    func shutdown() {
+        log("👋 herdr-voice closed")
+        guard let s = socket else { return }
+        socket = nil
+        s.cancel(with: .normalClosure, reason: nil)
+    }
+
     func toggleMute() {
         if status == .disconnected { return connect() }
         muted.toggle()
