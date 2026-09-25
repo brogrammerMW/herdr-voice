@@ -174,6 +174,7 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
+| `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
 | `HERDR_VOICE_ECHO_CANCEL` | on | `0` turns off macOS voice processing (echo cancellation and noise suppression). Use it with headphones: it cuts herdr-voice's CPU use by about 11 points |
 
 ### Shell commands (`run_shell`, opt-in)
@@ -258,8 +259,10 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ## Privacy and safety
 
-- **What leaves your Mac.** While unmuted, mic audio streams to the provider you chose (xAI or OpenAI), in 20 ms
-  chunks. When you ask
+- **What leaves your Mac.** Only while you're talking: mic audio is checked on your Mac and only speech is streamed
+  to the provider you chose (xAI or OpenAI), in 20 ms chunks, starting 300 ms before you start and ending 0.8 s
+  after you stop. Silence never leaves the Mac, and after 3 quiet minutes the session is closed entirely until you
+  speak again. When you ask
   what an agent is doing, or when an agent finishes, the last lines of that agent's terminal are sent to the provider
   too. Don't use it near terminals showing secrets you wouldn't paste into a chat.
 - **Muting** stops audio from being sent, and clears whatever the provider had buffered.
@@ -304,7 +307,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 63 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 70 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -330,6 +333,21 @@ Sources/
     Hotkey.swift         # global hotkeys (⌥⌘M, Esc while speaking)
 Tests/HerdrVoiceTests/
 ```
+
+## Cost
+
+Providers bill per minute of audio (Grok about $0.05 to $0.08). An always-open mic would bill every unmuted minute,
+about $3 to $5 per hour, even if you only talk for a few minutes of it. herdr-voice instead:
+
+- **streams only speech.** A cheap check on your Mac opens the stream when you start talking (keeping the 300 ms
+  before, so the first word isn't clipped) and closes it 0.8 s after you stop, or once the provider has seen your
+  turn end. Measured on a real mic: 10 to 23% of a 12 s window streamed during conversation, 0% in silence.
+- **closes quiet sessions.** After 3 minutes with no speech, and nothing speaking or running, the session is
+  closed (`💤` in the log, the orb stays blue). The next thing you say reopens it; what you say while it reconnects
+  is held and sent once it's up, and a short recap restores the conversation. An agent finishing also reopens it
+  to tell you.
+
+Set `HERDR_VOICE_STREAM=always` to stream continuously instead.
 
 ## Troubleshooting
 
