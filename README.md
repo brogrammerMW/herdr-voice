@@ -30,6 +30,10 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   answers their approval prompts when you say so, and switches your view to a workspace, tab or agent.
 - **Runs your Herdr layout.** Create, list, rename and close workspaces (spaces) and tabs, and create, open, list
   and remove git worktrees, all by voice. New things open in the background unless you ask to switch to them.
+- **Starts agents where you need them.** "Make a worktree for fix login and start Claude in it" creates the branch,
+  the worktree and its workspace, starts Claude Code or Codex there, and hands it your first instruction if you gave one.
+- **Watches any pane.** Not just agents: ask "is the dev server up?" and it reads that pane, or "tell me when the
+  build prints done" and it speaks up when it does.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
   approval, the voice interrupts with a one- or two-sentence summary.
 - **Live orb, pinned to Herdr.** An orb sits in the bottom-left of the terminal window running Herdr and follows it
@@ -121,6 +125,8 @@ herdr-voice tool                                        # list the tools and wha
 herdr-voice tool list_workspaces
 herdr-voice tool create_tab '{"workspace":"forge","label":"logs"}'
 herdr-voice tool create_worktree '{"workspace":"forge","branch":"patch/12-fix-login","base":"main"}'
+herdr-voice tool start_agent '{"kind":"claude","workspace":"forge","branch":"fix-login","prompt":"Fix the login bug"}'
+herdr-voice tool watch_pane '{"target":"npm run build","text":"done"}'   # waits, then prints what the voice would hear
 ```
 
 Arguments are the same JSON the voice model sends. Tools that need a spoken yes (closing, removing, approving) only
@@ -152,6 +158,11 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "What worktrees does forge have?" | Lists its repo's worktrees: branch, folder, and where each is open |
 | "Make a worktree for forge on a new branch fix-login" | Creates the branch and worktree and opens it as a workspace |
 | "Open the fix-login worktree" | Opens an existing worktree that isn't open in Herdr |
+| "Make a worktree for fix login and start Claude in it" | New branch and worktree opened as a workspace, Claude Code started there (Codex if you say so) |
+| "Start Codex in a new tab of forge and have it add tests" | New tab, Codex started, and your instruction sent; you hear a summary when it's done |
+| "Is the dev server up?" | Finds the pane running it and summarizes its latest output |
+| "Tell me when the build prints done" | Watches that pane in the background and speaks up when the text appears (or after 10 minutes without it) |
+| "What's running in site?" | Lists the panes there: what each runs, its folder, and any agent |
 | "Close the forge workspace" | Asks you to confirm, then closes it after you say "yes" |
 | "Close the notes tab" | Same, for a tab |
 | "Remove the login-fix worktree" | Same, and it deletes that worktree's checkout (refuses if it has uncommitted changes) |
@@ -331,6 +342,9 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `create_tab` / `rename_tab` | `herdr tab create --no-focus [--workspace] [--label] [--cwd]` / `herdr tab rename` |
 | `list_worktrees` | `herdr worktree list --workspace <id>` |
 | `create_worktree` / `open_worktree` | `herdr worktree create --workspace <id> --branch <name> [--base <ref>]` / `herdr worktree open --workspace <id> --branch <name>` |
+| `start_agent` | `herdr worktree create`, `herdr tab create` or `herdr workspace create`, then `herdr agent start <name> --kind claude\|codex --pane <new pane>`, then `herdr agent prompt` if you gave an instruction |
+| `list_panes` / `read_pane` | `herdr api snapshot` / `herdr pane read <pane> --source recent` |
+| `watch_pane` | `herdr pane wait-output <pane> --regex <text> --lines 15 --timeout <ms>` in the background |
 | `close_workspace` / `close_tab` | `herdr workspace close` / `herdr tab close` |
 | `remove_worktree` | `herdr worktree remove --workspace <id>` (never `--force`) |
 | `run_shell` (opt-in) | Not a Herdr command: `zsh -c <command>` in the chosen folder, after your spoken yes |
@@ -344,6 +358,17 @@ prompts and spinners, so it is condensed first: escape codes, box-drawing and sp
 symbol-only lines are dropped, repeated lines are collapsed, and only the last 20 meaningful lines are sent. Smaller
 reports make the voice reply faster and keep its session context small. That is what lets the voice
 speak up on its own when an agent finishes.
+
+**Starting an agent.** `start_agent` makes the place first (worktree, tab or workspace), then runs
+`herdr agent start` in its new pane and waits up to a minute for the agent to be ready. The agent is named after
+the branch or label (`claude-fix-login`, with `-2` added if that name is taken). In a folder it hasn't seen, Claude
+Code first asks whether you trust the folder; the voice reads that question to you, and your spoken "yes" answers it
+(down, then enter). Your first instruction is only sent once the agent is ready.
+
+**Watching a pane.** `watch_pane` asks Herdr to wait for the text in the last 15 lines of the pane, so an old match
+further up doesn't count, but one already at the bottom is reported straight away ("the build already says done").
+Watches run in the background for up to 10 minutes by default (2 hours at most), don't keep a billed session open,
+and reopen a closed one to tell you the result. A command you type can match too, if it contains the awaited text.
 
 ## How it talks
 
@@ -415,6 +440,8 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 - Providers end sessions on their own (xAI after 15 minutes idle, OpenAI at 60 minutes). herdr-voice renews them
   automatically and replays a short recap of the conversation into the new session, but the model's memory beyond
   that recap starts fresh. While muted it waits and reconnects when you unmute, so no idle session is billed.
+- `start_agent` starts Claude Code or Codex only (Herdr supports more agent kinds). There is no "stop watching" yet;
+  a pane watch ends when it matches, times out or the pane closes.
 - Developed and used live mostly with Grok; Gemini Live has been verified live too. The OpenAI path uses the same
   protocol as Grok but has seen less real use.
 
@@ -422,7 +449,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 115 tests: workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 127 tests: starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 ```
 
@@ -441,6 +468,8 @@ Sources/
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
     ModelMenu.swift      # the orb's AI-model menu entries
     Manage.swift         # list/create/rename tools for workspaces, tabs and worktrees
+    StartAgent.swift     # start_agent: make a worktree, tab or workspace and start Claude or Codex in it
+    Panes.swift          # list, read and watch any pane
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # caps reply length by audio, flags code read aloud

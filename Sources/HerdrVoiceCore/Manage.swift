@@ -70,7 +70,7 @@ extension HerdrTools {
                 description = "rename \(kind.rawValue) \(t.label) to \(label)"
             }
         case "create_worktree", "open_worktree":
-            guard let branch = text("branch") else { return "error: say which branch" }
+            guard let branch = text("branch").map(branchName) else { return "error: say which branch" }
             switch resolve(text("workspace") ?? "", .workspace, run) {
             case .failure(let e): return e.text
             case .success(let w):
@@ -96,6 +96,11 @@ extension HerdrTools {
     }
 
     static func option(_ flag: String, _ value: String?) -> [String] { value.map { [flag, $0] } ?? [] }
+
+    /// Spoken branch names come with spaces ("fix login"); git branches can't have them.
+    static func branchName(_ spoken: String) -> String {
+        spoken.split(whereSeparator: \.isWhitespace).joined(separator: "-")
+    }
 
     static func expand(_ path: String) -> String { NSString(string: path).expandingTildeInPath }
 

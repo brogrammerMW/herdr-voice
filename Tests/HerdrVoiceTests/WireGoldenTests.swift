@@ -19,10 +19,10 @@ func setupGolden(provider: Provider, expected: String) {
     #expect(sha(withoutLaterTools(provider.sessionUpdate(instructions: "INSTR", voice: "VOICE"))) == expected)
 }
 
-/// Tools added after the recording (workspace/tab/worktree management) are left out; everything else must match.
+/// Tools added after the recording (workspace/tab/worktree management, panes, start_agent) are left out; everything else must match.
 private func withoutLaterTools(_ update: [String: Any]) -> [String: Any] {
     guard var session = update["session"] as? [String: Any], let tools = session["tools"] as? [[String: Any]] else { return update }
-    session["tools"] = tools.filter { !HerdrTools.manageTools.contains($0["name"] as? String ?? "") }
+    session["tools"] = tools.filter { !HerdrTools.manageTools.union(HerdrTools.paneTools).union(["start_agent"]).contains($0["name"] as? String ?? "") }
     var out = update
     out["session"] = session
     return out
