@@ -26,6 +26,7 @@ private final class FakeHerdr {
         case ("agent", "start"): return startReply
         case ("agent", "prompt"): return #"{"result":{"agent":{"agent_status":"working"}}}"#
         case ("agent", "read"), ("pane", "read"): return #"{"result":{"read":{"text":"\u001b[32mready\u001b[0m on port 3000\n\n"}}}"#
+        case ("pane", "split"): return #"{"result":{"pane":{"pane_id":"w1:p9","tab_id":"w1:t1"}}}"#
         case ("worktree", "create"), ("tab", "create"), ("workspace", "create"):
             return #"{"result":{"root_pane":{"pane_id":"w3:p1"},"workspace":{"workspace_id":"w3","label":"fix-login"}}}"#
         default: return #"{"result":{}}"#
@@ -146,3 +147,43 @@ func panesResolve(query: String, id: String) {
     ("fix login", "claude-fix-login"), ("patch/12-Fix_Login!", "claude-patch-12-fix-login"), ("", "claude"), ("***", "claude"),
 ])
 func agentNames(from: String, name: String) { #expect(HerdrTools.agentName("claude", from) == name) }
+
+// MARK: splits
+
+@Test func startsAnAgentToTheRightOfOrBelowAPane() {
+    let h = FakeHerdr()
+    let right = call("start_agent", #"{"kind":"codex","split":"npm run build","prompt":"Watch the build"}"#, h)
+    _ = call("start_agent", #"{"kind":"claude","split":"claude-2","direction":"down","cwd":"/x/api"}"#, h)
+    #expect(h.mutations == [
+        ["pane", "split", "w1:p2", "--direction", "right", "--no-focus"],
+        ["agent", "start", "codex", "--kind", "codex", "--pane", "w1:p9", "--timeout", "60000"],
+        ["agent", "prompt", "codex", "Watch the build", "--wait", "--until", "working", "--until", "blocked", "--timeout", "10000"],
+        ["pane", "split", "w1:p1", "--direction", "down", "--no-focus", "--cwd", "/x/api"],
+        ["agent", "start", "claude", "--kind", "claude", "--pane", "w1:p9", "--timeout", "60000"],
+    ])
+    #expect(right.output.contains("a new pane to the right of npm run build") && right.output.contains("(pane w1:p9)"))
+    #expect(right.watch == "codex")
+}
+
+@Test func badSplitsCreateNothing() {
+    let h = FakeHerdr()
+    #expect(call("start_agent", #"{"kind":"claude","split":"build","direction":"left"}"#, h).output.hasPrefix("error"))
+    #expect(call("start_agent", #"{"kind":"claude","split":"build","workspace":"forge","branch":"x"}"#, h).output.hasPrefix("error"))
+    #expect(call("start_agent", #"{"kind":"claude","split":"no such pane"}"#, h).output.hasPrefix("error"))
+    #expect(call("split_pane", #"{"target":"npm run"}"#, h).output.contains("ambiguous"))
+    #expect(h.mutations.isEmpty)
+}
+
+@Test func splitPaneReturnsTheNewPane() {
+    let h = FakeHerdr()
+    #expect(call("split_pane", #"{"target":"npm run dev"}"#, h).output == "done: split npm run dev to the right; the new pane is w1:p9")
+    #expect(call("split_pane", #"{"target":"w1:p1","direction":"down","focus":true}"#, h).output.hasSuffix("the new pane is w1:p9"))
+    #expect(h.mutations == [["pane", "split", "w2:p1", "--direction", "right", "--no-focus"], ["pane", "split", "w1:p1", "--direction", "down", "--focus"]])
+}
+
+@Test func splittingFromAnAgentReportNeedsASpokenYes() {
+    let h = FakeHerdr()
+    let ask = call("split_pane", #"{"target":"npm run dev"}"#, h, userInitiated: false).output
+    #expect(ask.hasPrefix("CONFIRMATION REQUIRED"))
+    #expect(h.mutations.isEmpty)
+}

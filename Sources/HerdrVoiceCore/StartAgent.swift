@@ -7,10 +7,13 @@ extension HerdrTools {
 
     static let startAgentSchema = fn(
         "start_agent",
-        "Start a Claude Code or Codex agent somewhere new in one step: in a new git worktree (give workspace and branch), "
+        "Start a Claude Code or Codex agent somewhere new in one step: next to an existing pane (give split, and "
+            + "direction right or down), in a new git worktree (give workspace and branch), "
             + "in a new tab of a workspace (give workspace only), or in a new workspace (no workspace; give cwd and/or label). "
             + "Optionally give it a first instruction. Takes up to a minute while the agent starts.",
         ["kind": ["type": "string", "enum": agentKinds, "description": "claude for Claude Code, codex for Codex"],
+         "split": str("Pane or agent to split, by ID, agent name or title; the agent starts in the new pane"),
+         "direction": directionField,
          "workspace": str("Workspace name or ID: the repository for a new worktree, or where to add a tab"),
          "branch": str("New branch for a new worktree, e.g. fix-login"),
          "base": str("Branch or commit the new worktree starts from; default is the current one"),
@@ -41,7 +44,17 @@ extension HerdrTools {
             }
         }
         let create: [String], place: String
-        if let branch = text("branch").map(branchName) {
+        if let target = text("split") {
+            guard text("branch") == nil else { return say("error: give either split or a new worktree's branch, not both") }
+            let pane: PaneRow
+            switch resolvePane(target, rows: paneRows(snapshot(run)), snapshot: snapshot(run)) {
+            case .failure(let e): return say(e.text)
+            case .success(let p): pane = p
+            }
+            guard let direction = splitDirection(text("direction")) else { return say("error: direction must be right or down") }
+            create = splitArguments(pane.id, direction, cwd: text("cwd"), focus: args["focus"] as? Bool == true)
+            place = "a new pane \(direction == "right" ? "to the right of" : "below") \(pane.label)"
+        } else if let branch = text("branch").map(branchName) {
             guard let w = workspace else { return say("error: say which workspace's repository the worktree is for") }
             create = ["worktree", "create", "--workspace", w.id, "--branch", branch, focusFlag]
                 + option("--base", text("base")) + option("--label", text("label"))
@@ -69,7 +82,7 @@ extension HerdrTools {
             return say("failed to create \(place), tell the developer and do not retry: \(made)")
         }
         let started = run(["agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", String(startTimeoutMs)])
-        let intro = "made \(place)\(self.made(made)) and started \(kind) as \(name)"
+        let intro = "made \(place)\(self.made(made)) (pane \(pane)) and started \(kind) as \(name)"
         if let code = errorCode(started) {
             if code == "agent_not_ready" {
                 // Typically Claude's "trust this folder?" question in a folder it hasn't seen.
@@ -96,9 +109,11 @@ extension HerdrTools {
         return (2...).lazy.map { "\(name)-\($0)" }.first { !taken.contains($0) }!
     }
 
+    /// The pane a create call made: a worktree, tab or workspace's first pane, or the new half of a split.
     static func rootPane(_ json: String) -> String? {
         let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
-        return ((obj?["result"] as? [String: Any])?["root_pane"] as? [String: Any])?["pane_id"] as? String
+        let result = obj?["result"] as? [String: Any]
+        return ((result?["root_pane"] ?? result?["pane"]) as? [String: Any])?["pane_id"] as? String
     }
 
     static func errorCode(_ json: String) -> String? {

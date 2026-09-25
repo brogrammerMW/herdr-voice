@@ -22,6 +22,54 @@ extension HerdrTools {
 
     static let paneTools: Set<String> = ["list_panes", "read_pane", "watch_pane"]
 
+    static let directionField: [String: Any] =
+        ["type": "string", "enum": ["right", "down"], "description": "Where the new pane goes: right (side by side) or down (below); default right"]
+
+    static let splitPaneSchema = fn(
+        "split_pane",
+        "Split a pane to the right or down, opening a new shell pane next to it. Returns the new pane's ID, which "
+            + "read_pane, watch_pane and start_agent can use.",
+        ["target": str("Pane to split, by ID, agent name or title"), "direction": directionField,
+         "cwd": str("Folder for the new pane; default is the split pane's"), "focus": focusField, "confirmed": confirmedField],
+        ["target"])
+
+    /// right unless the model said down; nil for anything else.
+    static func splitDirection(_ said: String?) -> String? {
+        switch said?.lowercased() {
+        case nil, "right": "right"
+        case "down": "down"
+        default: nil
+        }
+    }
+
+    static func splitArguments(_ pane: String, _ direction: String, cwd: String?, focus: Bool) -> [String] {
+        ["pane", "split", pane, "--direction", direction, focus ? "--focus" : "--no-focus"] + option("--cwd", cwd.map(expand))
+    }
+
+    /// split_pane: nothing is destroyed, so it runs at once when the developer asked; from an agent report it needs
+    /// a spoken yes like the other create tools.
+    static func splitPane(_ args: [String: Any], _ run: Runner, _ gate: ConfirmGate, userInitiated: Bool) -> String {
+        let snap = snapshot(run)
+        let pane: PaneRow
+        switch resolvePane(args["target"] as? String ?? "", rows: paneRows(snap), snapshot: snap) {
+        case .failure(let e): return e.text
+        case .success(let p): pane = p
+        }
+        guard let direction = splitDirection(args["direction"] as? String) else { return "error: direction must be right or down" }
+        let cwd = (args["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let command = splitArguments(pane.id, direction, cwd: cwd, focus: args["focus"] as? Bool == true)
+        let description = "split \(pane.label) \(direction == "right" ? "to the right" : "down")"
+        if !userInitiated, let stop = confirmStep("split_pane", action: "split_pane:\(command.joined(separator: " "))",
+                                                  question: description, confirmed: args["confirmed"] as? Bool ?? false, gate) {
+            return stop
+        }
+        let out = run(command)
+        guard !out.contains("\"error\""), let new = rootPane(out) else {
+            return "failed, tell the developer and do not retry: \(out)"
+        }
+        return "done: \(description); the new pane is \(new)"
+    }
+
     /// A pane watch the session runs in the background (see `watchPane`).
     public struct PaneWatch: Equatable {
         public let pane: String

@@ -229,8 +229,10 @@ herdr-voice pane. Report the result as a one-sentence summary.
 rename_tab, create_worktree and open_worktree; list_workspaces and list_worktrees show what exists. Create things \
 in the background unless the developer wants to switch to them. Say what you made in a few words, never its path.
 - When the developer wants an agent started somewhere new ("make a worktree for fix login and start Claude in it"), \
-call start_agent once; it creates the place and starts the agent. If the developer said what the agent should do, \
+call start_agent once; it creates the place and starts the agent. "Next to", "beside" or "to the right of" a pane \
+means split with direction right; "below" or "under" means direction down. If the developer said what the agent should do, \
 pass it as prompt. If it reports a startup question, read it and wait for the developer's answer.
+- split_pane opens a plain shell pane to the right of or below a pane and tells you its ID.
 - For panes that aren't agents (dev servers, builds, logs), use list_panes to find them and read_pane to check \
 them ("is the dev server up?"). When asked to say when something happens ("tell me when the build prints done"), \
 call watch_pane and say in a few words that you're watching; its [herdr] message tells you the outcome.
