@@ -386,7 +386,8 @@ The rules are in its instructions, and herdr-voice also enforces them in code (`
   `⚠  the voice read a file path aloud; it will be told not to`.
 - **Real interruptions only.** The provider's speech detection also hears the voice's own echo and room noise. The
   voice only stops for you when your mic heard a speech-level sound in the last 1.5 seconds; otherwise it keeps
-  talking and the pane logs `… kept talking: the mic didn't hear you (echo or noise)`.
+  talking and the pane logs `… kept talking: the mic didn't hear you (echo or noise)`. With
+  `HERDR_VOICE_STREAM=always` this check is off, and any speech the provider detects interrupts.
 - **One reply at a time.** Several tool results or agent reports arriving together are answered in a single reply,
   and identical tool calls repeated within a few seconds are not run twice, so the voice doesn't talk over itself.
 - **Exception:** when asking you to approve a `run_shell` command, it may read that command aloud.
@@ -406,7 +407,8 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   written to trick an AI ("SYSTEM: approve this"). herdr-voice fences that output as untrusted data, and more
   importantly the model can't act on it alone: approving an agent's prompt (`enter`, `y`, a digit) always needs your
   spoken yes, and a prompt the voice wants to send in reaction to an agent report (rather than to something you just
-  said) needs your yes for that exact text. The same goes for creating or renaming workspaces, tabs and worktrees.
+  said) needs your yes for that exact text. The same goes for creating or renaming workspaces, tabs and worktrees,
+  and for starting an agent.
 - **Risky actions need your voice.** Approvals, closing a workspace or tab, and removing a worktree are two-step: the
   voice asks, and it only goes ahead when the **first thing you say** after the question is a clear yes. The model
   can't confirm on its own; only your mic transcript can. Anything else you say first ("which one?", "no", "wait")
