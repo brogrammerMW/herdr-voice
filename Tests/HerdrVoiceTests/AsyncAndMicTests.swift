@@ -38,7 +38,8 @@ import Testing
     }
     var received: [Float] = []
     var chunk = [Float](repeating: 0, count: 50)
-    while received.count + Int(ring.dropped) < total {
+    let deadline = Date().addingTimeInterval(5) // fail fast instead of hanging the whole suite
+    while received.count + Int(ring.dropped) < total && Date() < deadline {
         if ring.read(50, into: &chunk) { received += chunk } else { await Task.yield() }
     }
     await writer.value

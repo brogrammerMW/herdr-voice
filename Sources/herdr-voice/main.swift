@@ -51,7 +51,7 @@ if args.contains("--orb-demo") {
 }
 
 guard let provider = Provider(rawValue: providerName) else {
-    FileHandle.standardError.write(Data("unknown provider \(providerName); use openai or grok\n".utf8))
+    FileHandle.standardError.write(Data("unknown provider \(providerName); use grok, openai or gemini\n".utf8))
     exit(2)
 }
 guard let apiKey = provider.apiKey(environment: env) else {

@@ -11,6 +11,10 @@ public enum ServerEvent: Equatable {
     case responseCreated
     case functionCall(callID: String, name: String, arguments: String)
     case responseDone
+    /// The provider will close this connection soon (Gemini `goAway`).
+    case sessionEnding
+    /// A handle to resume this session, context included, on the next connection (Gemini).
+    case resumptionHandle(String)
     case error(String)
     case ignored(String)
 

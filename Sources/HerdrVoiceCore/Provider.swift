@@ -1,12 +1,13 @@
 import Foundation
 
 public enum Provider: String, CaseIterable {
-    case openai, grok
+    case openai, grok, gemini
 
     public var url: URL {
         switch self {
         case .openai: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1")!
         case .grok: URL(string: "wss://api.x.ai/v1/realtime?model=grok-voice-latest")!
+        case .gemini: URL(string: GeminiLiveWire.endpoint)!
         }
     }
 
@@ -14,6 +15,30 @@ public enum Provider: String, CaseIterable {
         switch self {
         case .openai: "OPENAI_API_KEY"
         case .grok: "XAI_API_KEY"
+        case .gemini: "GEMINI_API_KEY"
+        }
+    }
+
+    /// The connection request. OpenAI and xAI take the key as a bearer header. Gemini Live only accepts it as a
+    /// `key` query parameter, so this URL must never be logged (nothing in herdr-voice logs URLs).
+    public func request(key: String) -> URLRequest {
+        switch self {
+        case .openai, .grok:
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            return request
+        case .gemini:
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "key", value: key)]
+            return URLRequest(url: components.url!)
+        }
+    }
+
+    /// The wire protocol for one connection. OpenAI and xAI share the OpenAI Realtime protocol.
+    public func makeWire(environment: [String: String] = ProcessInfo.processInfo.environment) -> Wire {
+        switch self {
+        case .openai, .grok: OpenAIRealtimeWire(provider: self)
+        case .gemini: GeminiLiveWire(model: environment["HERDR_VOICE_GEMINI_MODEL"] ?? GeminiLiveWire.defaultModel)
         }
     }
 
@@ -37,6 +62,7 @@ public enum Provider: String, CaseIterable {
         switch self {
         case .openai: "marin"
         case .grok: "eve"
+        case .gemini: "Kore"
         }
     }
 
@@ -71,6 +97,8 @@ public enum Provider: String, CaseIterable {
                 "audio": ["input": ["format": pcm], "output": ["format": pcm]],
                 "tools": tools,
             ] as [String: Any]]
+        case .gemini:
+            return GeminiLiveWire().setupMessage(instructions: instructions, voice: voice, resumeHandle: nil)
         }
     }
 }

@@ -172,9 +172,11 @@ Everything is set with environment variables (and one flag):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `grok` or `openai` |
+| `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `grok`, `openai` or `gemini` |
 | `XAI_API_KEY` | | Grok key, if it isn't in the Keychain (see [API keys](#api-keys)) |
 | `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
+| `GEMINI_API_KEY` | | Gemini key, if it isn't in the Keychain |
+| `HERDR_VOICE_GEMINI_MODEL` | `gemini-2.5-flash-native-audio-latest` | Gemini Live model, e.g. `gemini-3.8-live` if your plan has quota for it |
 | `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI) | Voice ID, passed straight to the provider |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
@@ -218,12 +220,28 @@ prompt, not even after rebuilding. The key travels over a private pipe, and star
 (`🔑 XAI_API_KEY from the Keychain`), never the value. If you did export a key at a prompt before, remove it from
 `~/.zsh_history` and rotate it.
 
+### Gemini Live
+
+`--provider gemini` uses Google's Gemini Live API. Store a key from Google AI Studio with
+`security add-generic-password -a "$USER" -s GEMINI_API_KEY -w`. Everything else works the same: tools, the orb,
+speech-only streaming, interrupts and confirmations. Differences worth knowing:
+
+- **Cheaper,** and Google has a free tier with rate limits (check current pricing).
+- **Sessions resume with their context.** Gemini replaces a connection about every 10 minutes and warns first;
+  herdr-voice renews it after whatever is being said finishes, and the conversation carries on without a recap.
+  Context compression is on, so there is no 15-minute session limit.
+- **Stopping the voice is local.** Gemini can't cancel a reply, so `Esc` or "stop" silences it on your Mac.
+- **The key travels in the connection URL** (the only way Gemini Live accepts it); herdr-voice never logs URLs.
+- If a model isn't in your plan you'll see `You exceeded your current quota` in the log; pick another with
+  `HERDR_VOICE_GEMINI_MODEL`.
+
 ### Voices
 
 | Provider | Voice IDs |
 |---|---|
 | Grok | `eve` (default), `rex`, `ara`, `sal`, `leo`, or your own custom voice ID from xAI's voice cloning |
 | OpenAI | `marin` (default), `cedar`, `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse` |
+| Gemini | `Kore` (default), or any Gemini prebuilt voice (for example `Puck`, `Charon`, `Aoede`, `Fenrir`) |
 
 For example, to use Rex:
 
@@ -243,6 +261,7 @@ curl -s https://api.x.ai/v1/tts/voices -H "Authorization: Bearer $XAI_API_KEY"
 |---|---|---|
 | Grok | `grok-voice-latest` | `wss://api.x.ai/v1/realtime` |
 | OpenAI | `gpt-realtime-2.1` | `wss://api.openai.com/v1/realtime` |
+| Gemini | `gemini-2.5-flash-native-audio-latest` (override with `HERDR_VOICE_GEMINI_MODEL`) | Gemini Live (`BidiGenerateContent` WebSocket) |
 
 Both are billed per minute of audio by the provider; check their pricing pages. With Grok, the voice can also search the
 web on its own ("what's the latest version of Swift?").
@@ -337,7 +356,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 84 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
+swift test           # 99 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
 swift build -c release
 ```
 
