@@ -59,7 +59,8 @@ final class Orb {
     private let bubble = CALayer()
     private var thinking = false
 
-    init(onClick: @escaping () -> Void) {
+    /// `onClick` for a plain click (mute), `onQuit` for the right-click menu's Quit item.
+    init(onClick: @escaping () -> Void, onQuit: @escaping () -> Void = { NSApp.terminate(nil) }) {
         let s = Orb.size
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: s, height: s),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -70,7 +71,7 @@ final class Orb {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
 
-        let view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick)
+        let view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, onQuit: onQuit)
         view.wantsLayer = true
         let root = view.layer!
 
@@ -266,14 +267,31 @@ final class Orb {
         CATransaction.commit()
     }
 
+    /// Click to mute; right-click (or control-click, as everywhere on macOS) for the menu.
     private final class ClickView: NSView {
         let onClick: () -> Void
-        init(frame: NSRect, onClick: @escaping () -> Void) {
+        let onQuit: () -> Void
+        init(frame: NSRect, onClick: @escaping () -> Void, onQuit: @escaping () -> Void) {
             self.onClick = onClick
+            self.onQuit = onQuit
             super.init(frame: frame)
         }
         required init?(coder: NSCoder) { nil }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) { onClick() }
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) { return showMenu(event) }
+            onClick()
+        }
+        override func rightMouseDown(with event: NSEvent) { showMenu(event) }
+
+        private func showMenu(_ event: NSEvent) {
+            let menu = NSMenu()
+            let quit = NSMenuItem(title: "Quit herdr-voice", action: #selector(quitChosen), keyEquivalent: "")
+            quit.target = self
+            menu.addItem(quit)
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
+
+        @objc private func quitChosen() { onQuit() }
     }
 }
