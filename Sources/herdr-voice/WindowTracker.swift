@@ -22,6 +22,8 @@ final class WindowTracker {
     private var cachedHostWindows: [WindowPin.Window] = []
     private var lastSlowRefresh = Date.distantPast
     private var lastPublished: (Bool, CGRect?)?
+    private var lastQuery = Date.distantPast
+    private var lastResult: Result = (false, nil)
 
     /// Written on main by the activation observer, read on `queue`.
     private let front = NSLock()
@@ -64,11 +66,16 @@ final class WindowTracker {
             cachedHostWindows = Self.windows(.optionAll, of: hosts)
         }
         guard !hosts.isEmpty else { return (false, nil) }
+        // The orb stays on the Herdr window whatever has focus, so the window is tracked either way: every tick
+        // while the terminal is in front (it can be dragged), once a second otherwise (a window can't be dragged
+        // without its app coming to the front; this still catches Space switches, minimizing, tab changes).
         let frontmost = front.withLock { frontPID } ?? hosts.first
-        guard let frontmost, hosts.contains(frontmost) else { return (true, nil) } // hidden, no window query
-        let windows = WindowPin.merge(onScreen: Self.windows(.optionOnScreenOnly, of: [frontmost]),
-                                      cached: cachedHostWindows.filter { $0.pid == frontmost })
-        return (true, WindowPin.target(windows: windows, hosts: hosts, frontmost: frontmost)?.frame)
+        let terminalInFront = frontmost.map(hosts.contains) ?? false
+        guard terminalInFront || Date().timeIntervalSince(lastQuery) >= 1 else { return lastResult }
+        lastQuery = Date()
+        let windows = WindowPin.merge(onScreen: Self.windows(.optionOnScreenOnly, of: hosts), cached: cachedHostWindows)
+        lastResult = (true, WindowPin.target(windows: windows, hosts: hosts)?.frame)
+        return lastResult
     }
 
     /// Host apps above herdr-voice itself and above every running `herdr` process (covers a server that
