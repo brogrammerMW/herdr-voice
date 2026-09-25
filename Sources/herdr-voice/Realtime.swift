@@ -43,6 +43,25 @@ final class Realtime {
     /// After a stop, audio still in flight for the cancelled response is dropped until the next response starts.
     private var droppingAudio = false
 
+    // Reconnecting. Providers close idle sessions (xAI after 15 minutes), networks drop, and a Mac that slept can
+    // leave a dead socket behind, so the session is kept alive and renewed automatically.
+    /// Bumped per connect so callbacks and scheduled retries that belong to an older socket are ignored.
+    private var connection = 0
+    /// True once the server has spoken on this socket; until then a close counts as a failed attempt, and mic
+    /// audio isn't streamed (it would only pile up send errors against a socket that isn't open).
+    private var established = false { didSet { syncSendGate() } }
+    /// Consecutive attempts that failed before a session came up.
+    private var attempts = 0
+    /// Set when the provider announces why it's closing, read when the socket then fails.
+    private var closeReason: Reconnect.Reason?
+    private var hadSession = false
+    /// What was said, replayed into a renewed session so it still knows the conversation.
+    private var recap = Recap()
+    /// Agent reports that arrived while offline, delivered once the next session is up.
+    private var outbox: [[String: Any]] = []
+    private var keepalive: DispatchSourceTimer?
+    private var pongPending = false
+
     init(provider: Provider, key: String, voice: String) {
         self.provider = provider
         self.key = key
@@ -59,6 +78,9 @@ final class Realtime {
     }
 
     func connect() {
+        connection += 1
+        established = false
+        closeReason = nil
         status = .connecting
         var req = URLRequest(url: provider.url)
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -67,17 +89,109 @@ final class Realtime {
         task.resume()
         sendRaw(provider.sessionUpdate(instructions: voiceInstructions, voice: voice))
         status = .live
-        log("● connecting to \(provider.rawValue) — speak any time, \(Hotkey.label) mutes, Esc stops speech")
+        if hadSession || attempts > 0 {
+            log("↻ reconnecting to \(provider.rawValue)")
+        } else {
+            log("● connecting to \(provider.rawValue) — speak any time, \(Hotkey.label) mutes, Esc stops speech")
+        }
         receive(task)
+        startKeepalive(task)
+    }
+
+    /// The first server event on a socket: the session is really up.
+    private func sessionEstablished() {
+        established = true
+        attempts = 0
+        if hadSession, let context = recap.message {
+            sendRaw(["type": "conversation.item.create", "item": [
+                "type": "message", "role": "user", "content": [["type": "input_text", "text": context]],
+            ]])
+        }
+        hadSession = true
+        guard !outbox.isEmpty else { return }
+        outbox.forEach(sendRaw)
+        outbox.removeAll()
+        sendRaw(["type": "response.create"])
+    }
+
+    private func connectionLost(_ task: URLSessionWebSocketTask, reason: Reconnect.Reason, detail: String) {
+        guard task === socket else { return }
+        socket = nil
+        task.cancel(with: .goingAway, reason: nil)
+        keepalive?.cancel()
+        keepalive = nil
+        status = .disconnected
+        responseActive = false
+        awaitingReplySince = nil
+        if !established { attempts += 1 }
+        guard let delay = Reconnect.delay(reason: reason, attempt: attempts, muted: muted) else {
+            log(muted ? "… \(detail); reconnects when you unmute"
+                      : "✖ \(detail); gave up after \(attempts) tries, press \(Hotkey.label) to reconnect")
+            return
+        }
+        log(delay == 0 ? "↻ \(detail)" : "↻ \(detail); reconnecting in \(Int(delay)) s")
+        let id = connection
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.connection == id, self.status == .disconnected else { return }
+            self.connect()
+        }
+    }
+
+    /// Pings every 20 s. A failed ping, or no pong by the next one, means the socket is dead (sleep, network
+    /// change) even though no error surfaced, so reconnect instead of waiting forever.
+    private func startKeepalive(_ task: URLSessionWebSocketTask) {
+        keepalive?.cancel()
+        pongPending = false
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 20, repeating: 20, leeway: .seconds(2))
+        timer.setEventHandler { [weak self, weak task] in
+            guard let self, let task else { return }
+            if self.pongPending {
+                return self.connectionLost(task, reason: .dropped, detail: "no reply to keepalive")
+            }
+            self.pongPending = true
+            task.sendPing { error in
+                DispatchQueue.main.async {
+                    self.pongPending = false
+                    if let error { self.connectionLost(task, reason: .dropped, detail: "keepalive failed: \(error.localizedDescription)") }
+                }
+            }
+        }
+        timer.resume()
+        keepalive = timer
+    }
+
+    /// Sends a conversation item that should get a spoken reply, or keeps it for the next session and makes sure
+    /// one is coming: an agent report is worth reopening the session for, even while muted.
+    private func deliver(_ item: [String: Any]) {
+        if status == .live && established {
+            sendRaw(item)
+            sendRaw(["type": "response.create"])
+            return
+        }
+        outbox.append(item)
+        if status == .disconnected {
+            attempts = 0
+            connect()
+        }
     }
 
     private func syncSendGate() {
-        let allowed = !muted && status == .live
+        let allowed = !muted && status == .live && established
         mayStream.withLock { $0 = allowed }
     }
 
     func toggleMute() {
-        if status == .disconnected { return connect() }
+        if status == .disconnected {
+            // Offline while muted means we were waiting for you: unmute and reconnect in one press.
+            if muted {
+                muted = false
+                audio.setMuted(false)
+                log("🎙  listening")
+            }
+            attempts = 0
+            return connect()
+        }
         muted.toggle()
         audio.setMuted(muted)
         if muted { sendRaw(["type": "input_audio_buffer.clear"]) }
@@ -131,14 +245,15 @@ final class Realtime {
             DispatchQueue.main.async {
                 guard let self, task === self.socket else { return }
                 switch result {
-                case .success(.string(let text)):
-                    self.handle(ServerEvent.decode(text))
-                    self.receive(task)
-                case .success:
+                case .success(let message):
+                    if !self.established { self.sessionEstablished() }
+                    if case .string(let text) = message { self.handle(ServerEvent.decode(text)) }
                     self.receive(task)
                 case .failure(let err):
-                    self.status = .disconnected
-                    log("✖ disconnected: \(err.localizedDescription) — press \(Hotkey.label) to reconnect")
+                    let reason = self.closeReason ?? .dropped
+                    self.connectionLost(task, reason: reason,
+                                        detail: reason == .sessionEnded ? "provider ended the session (idle or time limit)"
+                                                                      : "disconnected: \(err.localizedDescription)")
                 }
             }
         }
@@ -158,8 +273,10 @@ final class Realtime {
             enforce(policy.feed(delta))
         case .assistantTranscript(let t):
             log("voice: \(t)")
+            recap.add("voice", t)
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
+            recap.add("you", t)
             ConfirmGate.shared.heard(t)
             retriedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
@@ -174,7 +291,8 @@ final class Realtime {
         case .functionCall(let callID, let name, let args):
             runTool(callID: callID, name: name, args: args)
         case .error(let msg):
-            log("✖ \(msg)")
+            // A provider ending the session (idle, time limit) is routine: note it and let the close renew it.
+            if Reconnect.isSessionEnd(msg) { closeReason = .sessionEnded } else { log("✖ \(msg)") }
         case .responseDone:
             responseActive = false
             awaitingReplySince = nil
@@ -191,15 +309,18 @@ final class Realtime {
         // Speech start comes from the mic via server VAD, so an injected report can't fake it.
         let userInitiated = lastSpeechStart > lastReport
         toolsRunning += 1
+        let id = connection
         DispatchQueue.global().async {
             let outcome = HerdrTools.call(name, arguments: args, userInitiated: userInitiated)
             DispatchQueue.main.async {
                 self.toolsRunning -= 1
+                if let target = outcome.watch { self.watch(target) }
+                // A result for a call from a session that has since closed has nowhere to go.
+                guard self.connection == id, self.status == .live else { return }
                 self.sendRaw(["type": "conversation.item.create", "item": [
                     "type": "function_call_output", "call_id": callID, "output": outcome.output,
                 ]])
                 self.sendRaw(["type": "response.create"])
-                if let target = outcome.watch { self.watch(target) }
             }
         }
     }
@@ -211,11 +332,10 @@ final class Realtime {
                 self.busyAgents.remove(target)
                 log("← \(target) settled")
                 self.lastReport = Date()
-                self.sendRaw(["type": "conversation.item.create", "item": [
+                self.deliver(["type": "conversation.item.create", "item": [
                     "type": "message", "role": "user",
                     "content": [["type": "input_text", "text": "[herdr] " + report]],
                 ]])
-                self.sendRaw(["type": "response.create"])
             }
         }
     }
@@ -226,8 +346,15 @@ final class Realtime {
 
     private func sendRaw(_ obj: [String: Any]) {
         guard let socket, let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        socket.send(.string(String(decoding: data, as: UTF8.self))) { err in
-            if let err { DispatchQueue.main.async { log("✖ send: \(err.localizedDescription)") } }
+        let id = connection
+        socket.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] err in
+            guard let err else { return }
+            DispatchQueue.main.async {
+                // Failures on a socket that never came up, or has since been replaced, are already reported by
+                // the reconnect logic; only a live session's send errors are news.
+                guard let self, self.connection == id, self.established else { return }
+                log("✖ send: \(err.localizedDescription)")
+            }
         }
     }
 }

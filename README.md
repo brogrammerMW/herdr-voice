@@ -293,8 +293,9 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   either side of the sentence boundary. It relies on the provider streaming transcript deltas
   (`response.output_audio_transcript.delta`); without them only the instructions apply.
 - `run_shell` stops the shell when it times out, but anything it started in the background keeps running.
-- No automatic reconnect. If the connection drops the orb turns red; press `⌥⌘M` to reconnect. Providers cap session
-  length (OpenAI: 60 minutes).
+- Providers end sessions on their own (xAI after 15 minutes idle, OpenAI at 60 minutes). herdr-voice renews them
+  automatically and replays a short recap of the conversation into the new session, but the model's memory beyond
+  that recap starts fresh. While muted it waits and reconnects when you unmute, so no idle session is billed.
 - If an agent finishes while the voice is still talking, its summary can be refused by the provider ("active
   response"); ask "what did it do?" to hear it.
 - Developed and used live with Grok. The OpenAI path uses the same protocol but has seen less real use.
@@ -303,7 +304,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 57 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 63 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -337,7 +338,8 @@ Tests/HerdrVoiceTests/
 | `✖ audio: ...` on start | Allow microphone access for your terminal in System Settings → Privacy & Security → Microphone, then restart |
 | `set XAI_API_KEY to use grok` | Export the key in the shell that runs herdr-voice |
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
-| `✖ disconnected` / red orb | Network or auth problem. Check the key, then press `⌥⌘M` to reconnect |
+| `↻ …reconnecting` in the log | Normal: the session ended (idle or time limit) or the network dropped; it reconnects by itself (1 → 30 s backoff) |
+| `✖ …gave up after 8 tries` / red orb | Repeated failures, usually a wrong or revoked key or no network. Fix that, then press `⌥⌘M` |
 | `⚠ not inside a Herdr pane` | Start it from a Herdr pane so it controls the right session |
 | The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud (and make sure `HERDR_VOICE_ECHO_CANCEL` isn't `0`) |
 | herdr-voice uses more CPU than you'd like | Most of it is macOS voice processing (about 12% of a core). With headphones, set `HERDR_VOICE_ECHO_CANCEL=0` (about 1% instead); otherwise mute when you aren't talking (about 5%) |
