@@ -1,24 +1,22 @@
 import Foundation
 import HerdrVoiceCore
 
-/// `herdr-voice install-command`: puts `herdr-voice` on PATH, as a link in ~/.local/bin to this binary.
+/// `herdr-voice install-command`: puts the `herdr-voice` command in ~/.local/bin (see LauncherScript).
 func installCommand() -> Int32 {
-    let home = NSHomeDirectory(), bin = home + "/.local/bin", link = bin + "/herdr-voice"
+    let bin = NSHomeDirectory() + "/.local/bin", path = bin + "/herdr-voice"
     let me = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let fm = FileManager.default
-    if URL(fileURLWithPath: link).resolvingSymlinksInPath().path == me {
-        print("✓ \(link) is already this herdr-voice")
-    } else {
-        do {
-            try fm.createDirectory(atPath: bin, withIntermediateDirectories: true)
-            if (try? fm.destinationOfSymbolicLink(atPath: link)) != nil || fm.fileExists(atPath: link) { try fm.removeItem(atPath: link) }
-            try fm.createSymbolicLink(atPath: link, withDestinationPath: me)
-            print("✓ linked \(link) → \(me)")
-        } catch {
-            print("✖ couldn't link \(link): \(error.localizedDescription)")
-            return 1
-        }
+    do {
+        try fm.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        // Replaces an older link or launcher, or a copy of the binary made by hand.
+        if (try? fm.destinationOfSymbolicLink(atPath: path)) != nil || fm.fileExists(atPath: path) { try fm.removeItem(atPath: path) }
+        try LauncherScript.text(installedFrom: me).write(toFile: path, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+    } catch {
+        print("✖ couldn't write \(path): \(error.localizedDescription)")
+        return 1
     }
+    print("✓ installed the herdr-voice command at \(path)")
     let onPath = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains { $0 == bin }
     if !onPath { print("⚠ \(bin) isn't on your PATH; add it: export PATH=\"$HOME/.local/bin:$PATH\"") }
     print("✓ type herdr-voice in any Herdr pane to start the voice")
@@ -26,11 +24,12 @@ func installCommand() -> Int32 {
 }
 
 func uninstallCommand() -> Int32 {
-    let home = NSHomeDirectory(), link = home + "/.local/bin/herdr-voice"
-    if (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) != nil {
-        try? FileManager.default.removeItem(atPath: link)
-        print("✓ removed \(link)")
-    }
+    let path = NSHomeDirectory() + "/.local/bin/herdr-voice", fm = FileManager.default
+    let isLink = (try? fm.destinationOfSymbolicLink(atPath: path)) != nil
+    let isLauncher = (try? String(contentsOfFile: path, encoding: .utf8)).map(LauncherScript.isLauncher) ?? false
+    guard isLink || isLauncher else { print("nothing to remove at \(path)"); return 0 }
+    try? fm.removeItem(atPath: path)
+    print("✓ removed \(path)")
     return 0
 }
 
