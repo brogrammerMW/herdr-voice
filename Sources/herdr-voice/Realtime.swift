@@ -64,8 +64,10 @@ final class Realtime {
     }
     /// Code-level enforcement of the speaking style for the reply being generated.
     private var policy = SpeechPolicy()
-    /// One corrective retry per reply chain, so a model that keeps leaking can't loop.
-    private var retriedLeak = false
+    /// What the current reply read aloud that it shouldn't have; corrected once the reply is over.
+    private var leaked: String?
+    /// One correction per turn of yours, so the notes don't pile up.
+    private var correctedLeak = false
     /// After a stop, audio still in flight for the cancelled response is dropped until the next response starts.
     private var droppingAudio = false
 
@@ -94,6 +96,8 @@ final class Realtime {
     private let gated = ProcessInfo.processInfo.environment["HERDR_VOICE_STREAM"] != "always"
     /// A session with no speech for this long, and nothing speaking or running, is closed until you speak.
     static let quietClose: TimeInterval = 180
+    /// How recent the mic's own loud onset must be for the provider's "speech started" to cut the voice off.
+    static let bargeInWindow: TimeInterval = 1.5
     /// Mic-queue only. HERDR_VOICE_GATE_THRESHOLD pins the opening level for unusual hardware.
     private var gate = SpeechGate<String>(
         overrideThreshold: ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_THRESHOLD"].flatMap(Float.init))
@@ -111,6 +115,8 @@ final class Realtime {
         var held: [String] = []
         /// The current connection's wire, for encoding audio on the mic queue.
         var wire: Wire?
+        /// The last time the mic heard a speech-loud chunk (above the gate's opening level).
+        var lastLoud = Date.distantPast
     }
     private let micShared = OSAllocatedUnfairLock(initialState: MicShared())
     /// Closed on purpose because nobody was talking; any speech (or an agent report) reopens it.
@@ -141,6 +147,7 @@ final class Realtime {
             return
         }
         let wasOpen = gate.isOpen
+        if gated && level > gate.openThreshold { micShared.withLock { $0.lastLoud = Date() } }
         let chunks = gated ? gate.process(b64, level: level, holdOpen: midTurn) : [b64]
         if gateDebug && gated { debugMeter(level: level, opened: gate.isOpen && !wasOpen, closed: wasOpen && !gate.isOpen) }
         guard !chunks.isEmpty else { return }
@@ -403,20 +410,28 @@ final class Realtime {
         case .ok:
             break
         case .tooLong:
-            // Stop generating; audio already queued finishes, so the cut lands near the end of sentence two.
+            // Stop generating; what was already heard or queued plays out, the rest is dropped.
             if responseActive { send(.cancelReply) }
             replies.reset()
             awaitingCreated = false
             droppingAudio = true
-            log("✂  cut after \(SpeechPolicy.maxSentences) sentences")
+            log("✂  cut after \(Int(SpeechPolicy.maxAudioSeconds)) s of speech")
         case .leak(let what):
-            stopSpeech(reason: "was reading \(what) aloud")
-            guard !retriedLeak else { return }
-            retriedLeak = true
-            addReplyText("[policy] You started reading \(what) aloud and were cut off. Say it again as one or two plain "
-                + "sentences with no code, paths, file names, URLs or diffs.")
-            if replies.wantReply() { requestResponse() }
+            // Cutting here would land mid-word, seconds before the audio catches up with the transcript. Let the
+            // reply finish (the audio cap still bounds it) and correct the model afterwards.
+            leaked = what
+            log("⚠  the voice read \(what) aloud; it will be told not to")
         }
+    }
+
+    /// After a reply that read code-like text aloud: tell the model, without asking for another reply.
+    private func correctLeak() {
+        guard let what = leaked else { return }
+        leaked = nil
+        guard !correctedLeak else { return }
+        correctedLeak = true
+        send(.userText("[policy] Your last reply read \(what) aloud. Never say code, paths, file names, URLs or diffs; "
+            + "describe them in plain words. Don't answer this note.", expectsReply: false))
     }
 
     /// Stops local playback and tells the server how much of the reply was actually heard.
@@ -460,6 +475,7 @@ final class Realtime {
     private func handle(_ event: ServerEvent) {
         switch event {
         case .audioDelta(let item, let b64):
+            if !droppingAudio { enforce(policy.audio(base64Count: b64.utf8.count)) }
             if !droppingAudio { audio.play(base64: b64, item: item) }
         case .responseCreated:
             replies.responseCreated()
@@ -483,7 +499,7 @@ final class Realtime {
                 ConfirmGate.shared.heard(t)
             }
             speechOverlappedPlayback = false
-            retriedLeak = false
+            correctedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
         case .speechStopped:
@@ -494,8 +510,10 @@ final class Realtime {
             lastSpeechStart = Date()
             micShared.withLock { $0.midTurn = true }
             awaitingReplySince = nil
-            // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest.
-            cutPlayback()
+            // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest. The provider also
+            // hears the voice's own echo and noise as speech, so only cut when this mic heard a loud onset too.
+            let heard = !gated || micShared.withLock { Date().timeIntervalSince($0.lastLoud) < Self.bargeInWindow }
+            if heard { cutPlayback() } else if audio.isSpeaking { log("… kept talking: the mic didn't hear you (echo or noise)") }
         case .functionCall(let callID, let name, let args):
             runTool(callID: callID, name: name, args: args)
         case .error(let msg):
@@ -508,6 +526,7 @@ final class Realtime {
             }
         case .responseDone:
             awaitingReplySince = nil
+            correctLeak()
             // Tool results from this turn are answered together, in one reply, once it's finished.
             if replies.responseDone() { requestResponse() }
             if renewWhenIdle && !replies.responseActive && replies.callsInFlight == 0 { renewConnection() }

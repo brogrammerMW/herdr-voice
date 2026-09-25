@@ -1,55 +1,51 @@
 import Foundation
 
-/// Enforces the speaking style in code rather than trusting the model: fed the assistant's streaming transcript,
-/// it flags a reply that starts a third sentence or starts reading code, paths, URLs or diffs aloud.
+/// Enforces the speaking style in code rather than trusting the model.
+///
+/// Length is capped by the reply's audio, not its transcript: providers stream the transcript well ahead of the
+/// audio (Grok by about 10 s), so cutting when the transcript reached a third sentence dropped audio of sentences
+/// that hadn't been heard yet. Code-like text (code, paths, URLs, diffs) is flagged from the transcript, and the
+/// session corrects it after the reply rather than cutting the reply mid-word.
 public struct SpeechPolicy {
     public enum Verdict: Equatable {
         case ok
-        /// A third sentence began; stop generating.
+        /// The reply's audio passed `maxAudioSeconds`; stop generating.
         case tooLong
-        /// Code-like text is being spoken; cut it off and ask for a summary instead.
+        /// Code-like text is being spoken; correct the model once the reply is over.
         case leak(String)
     }
 
-    public static let maxSentences = 2
+    /// Two spoken sentences take well under this; it only stops a model that keeps going.
+    public static let maxAudioSeconds = 20.0
+    /// PCM16 mono at 24 kHz.
+    static let bytesPerSecond = 48_000.0
 
     /// Short approval questions for run_shell read the command aloud on purpose; skip leak checks then.
     public var allowCode = false
     private var text = ""
-    private var flagged = false
+    private var leakFlagged = false
+    private var audioBytes = 0
+    private var lengthFlagged = false
 
     public init(allowCode: Bool = false) { self.allowCode = allowCode }
 
-    /// Feed each transcript delta. Returns a non-`.ok` verdict at most once per reply.
+    /// Feed each transcript delta. Returns `.leak` at most once per reply.
     public mutating func feed(_ delta: String) -> Verdict {
-        guard !flagged else { return .ok }
+        guard !leakFlagged, !allowCode else { return .ok }
         text += delta
-        if !allowCode, let reason = Self.leak(in: text) {
-            flagged = true
-            return .leak(reason)
-        }
-        if Self.startedSentences(in: text) > Self.maxSentences {
-            flagged = true
-            return .tooLong
-        }
-        return .ok
+        guard let reason = Self.leak(in: text) else { return .ok }
+        leakFlagged = true
+        return .leak(reason)
     }
 
-    /// Sentences begun so far: one, plus one for each terminator that is followed by more words.
-    static func startedSentences(in text: String) -> Int {
-        let chars = Array(text)
-        var count = chars.contains { $0.isLetter || $0.isNumber } ? 1 : 0
-        var i = 0
-        while i < chars.count {
-            if ".!?".contains(chars[i]), i + 1 < chars.count, chars[i + 1].isWhitespace,
-               chars[(i + 1)...].contains(where: { $0.isLetter || $0.isNumber }) {
-                count += 1
-                // Collapse runs like "..." or "?!".
-                while i + 1 < chars.count, ".!?".contains(chars[i + 1]) { i += 1 }
-            }
-            i += 1
-        }
-        return count
+    /// Feed each base64 audio delta before playing it. Returns `.tooLong` once, for the delta that crosses the cap
+    /// (it and everything after it should be dropped).
+    public mutating func audio(base64Count: Int) -> Verdict {
+        guard !lengthFlagged else { return .ok }
+        audioBytes += base64Count * 3 / 4
+        guard Double(audioBytes) / Self.bytesPerSecond > Self.maxAudioSeconds else { return .ok }
+        lengthFlagged = true
+        return .tooLong
     }
 
     private static let leakPatterns: [(String, String)] = [

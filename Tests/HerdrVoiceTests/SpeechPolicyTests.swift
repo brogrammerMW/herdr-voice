@@ -24,9 +24,17 @@ private func stream(_ text: String, allowCode: Bool = false) -> SpeechPolicy.Ver
 ])
 func shortSummariesPass(text: String) { #expect(stream(text) == .ok) }
 
-@Test func aThirdSentenceIsCut() {
-    #expect(stream("It finished. Tests pass. It also changed the config.") == .tooLong)
-    #expect(stream("Wait... what? Really.") == .tooLong) // "..." counts once
+@Test func longTranscriptsAreNotCut() {
+    // The transcript runs ahead of the audio, so its length is never the reason to cut.
+    #expect(stream("It finished. Tests pass. It also changed the config. And more.") == .ok)
+}
+
+@Test func audioPastTheCapIsCutOnce() {
+    var p = SpeechPolicy()
+    let second = 64_000 // base64 chars of one second of PCM16 24 kHz audio
+    for _ in 0..<Int(SpeechPolicy.maxAudioSeconds) { #expect(p.audio(base64Count: second) == .ok) }
+    #expect(p.audio(base64Count: second) == .tooLong)
+    #expect(p.audio(base64Count: second) == .ok)
 }
 
 @Test("code, paths, URLs and diffs are caught", arguments: [
@@ -47,8 +55,8 @@ func leaksAreCaught(text: String, reason: String) { #expect(stream(text) == .lea
 
 @Test func aVerdictFiresOncePerReply() {
     var p = SpeechPolicy()
-    #expect(p.feed("One. Two. Three.") == .tooLong)
-    #expect(p.feed(" Four. `code`") == .ok)
+    #expect(p.feed("See `code`") == .leak("code"))
+    #expect(p.feed(" and https://x.io") == .ok)
 }
 
 @Test func transcriptDeltasDecode() {
