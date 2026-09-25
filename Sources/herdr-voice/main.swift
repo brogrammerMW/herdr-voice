@@ -4,6 +4,22 @@ import HerdrVoiceCore
 // ponytail: Swift 5 language mode with main-queue confinement instead of actors; move to Swift 6 strict
 // concurrency if the session grows more shared state.
 
+// As a Herdr plugin, settings come from config.env in the plugin's config directory (see PluginConfig).
+if let dir = ProcessInfo.processInfo.environment["HERDR_PLUGIN_CONFIG_DIR"] {
+    let file = URL(fileURLWithPath: dir).appendingPathComponent(PluginConfig.fileName)
+    if let text = try? String(contentsOf: file, encoding: .utf8) {
+        let (settings, rejected) = PluginConfig.parse(text)
+        for (key, value) in settings { setenv(key, value, 0) } // a real environment variable still wins
+        if !rejected.isEmpty {
+            log("⚠ \(PluginConfig.fileName): ignored \(rejected.joined(separator: ", ")) (only HERDR_VOICE_* settings; "
+                + "API keys go in the Keychain with herdr-voice setup)")
+        }
+    } else {
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try? PluginConfig.template.write(to: file, atomically: true, encoding: .utf8)
+    }
+}
+
 let env = ProcessInfo.processInfo.environment
 let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
@@ -84,6 +100,13 @@ guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use grok, openai or gemini\n".utf8))
     exit(2)
 }
+// One listener at a time: a second copy would share the mic, hear the first one's voice and double the bill.
+let lock = SingleInstance.acquire()
+if let holder = lock.holder {
+    FileHandle.standardError.write(Data("herdr-voice is already running\(holder > 0 ? " (pid \(holder))" : ""); stop it first.\n".utf8))
+    exit(1)
+}
+
 // No key yet: in a terminal, ask for it right away (first run); otherwise say how to add one.
 if provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
     print("No \(provider.menuTitle) API key yet.")

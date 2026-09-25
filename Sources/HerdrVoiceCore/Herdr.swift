@@ -40,7 +40,19 @@ public enum HerdrTools {
     public typealias AsyncRunner = ([String], @escaping (String) -> Void) -> Void
 
     /// Runs `herdr <args>` without holding a thread while it runs; `done` gets stdout+stderr.
-    public static let herdrAsync: AsyncRunner = { args, done in spawn("/usr/bin/env", ["herdr"] + args, done: done) }
+    public static let herdrAsync: AsyncRunner = { args, done in
+        let (exe, lead) = herdrCommand()
+        spawn(exe, lead + args, done: done)
+    }
+
+    /// The running Herdr's own binary when Herdr says where it is (HERDR_BIN_PATH, set in every pane and plugin),
+    /// so a different `herdr` earlier on PATH can't answer instead; otherwise `herdr` from PATH.
+    static func herdrCommand(_ env: [String: String] = ProcessInfo.processInfo.environment) -> (String, [String]) {
+        if let path = env["HERDR_BIN_PATH"], path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) {
+            return (path, [])
+        }
+        return ("/usr/bin/env", ["herdr"])
+    }
 
     /// Blocking form for the short tool calls, which already run off the main thread and finish in milliseconds.
     public static let herdr: Runner = { args in
