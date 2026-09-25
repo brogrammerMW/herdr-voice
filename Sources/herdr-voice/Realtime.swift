@@ -74,8 +74,13 @@ final class Realtime {
     private let gated = ProcessInfo.processInfo.environment["HERDR_VOICE_STREAM"] != "always"
     /// A session with no speech for this long, and nothing speaking or running, is closed until you speak.
     static let quietClose: TimeInterval = 180
-    /// Mic-queue only.
-    private var gate = SpeechGate<String>()
+    /// Mic-queue only. HERDR_VOICE_GATE_THRESHOLD pins the opening level for unusual hardware.
+    private var gate = SpeechGate<String>(
+        overrideThreshold: ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_THRESHOLD"].flatMap(Float.init))
+    /// HERDR_VOICE_GATE_DEBUG=1: log gate openings/closings and a level meter every 5 s, to tune any mic.
+    private let gateDebug = ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_DEBUG"] == "1"
+    private var meterPeak: Float = 0
+    private var meterChunks = 0
     /// Shared between the mic queue and main.
     private struct MicShared {
         var muted = false
@@ -110,7 +115,9 @@ final class Realtime {
             gate.reset()
             return
         }
+        let wasOpen = gate.isOpen
         let chunks = gated ? gate.process(b64, level: level, holdOpen: midTurn) : [b64]
+        if gateDebug && gated { debugMeter(level: level, opened: gate.isOpen && !wasOpen, closed: wasOpen && !gate.isOpen) }
         guard !chunks.isEmpty else { return }
         if mayStream.withLock({ $0 }) {
             if gated { micShared.withLock { $0.lastSpeech = Date() } }
@@ -124,6 +131,22 @@ final class Realtime {
             $0.lastSpeech = Date()
         }
         DispatchQueue.main.async { self.wake() }
+    }
+
+    /// On the mic queue: what the gate sees, so any mic can be checked and tuned.
+    private func debugMeter(level: Float, opened: Bool, closed: Bool) {
+        let floor = gate.noiseFloor, open = gate.openThreshold
+        if opened || closed {
+            let line = String(format: "🎚  gate %@  level %.4f  floor %.4f  open at %.4f", opened ? "OPEN " : "close", level, floor, open)
+            DispatchQueue.main.async { log(line) }
+        }
+        meterPeak = max(meterPeak, level)
+        meterChunks += 1
+        guard meterChunks >= 250 else { return } // every 5 s
+        let line = String(format: "🎚  floor %.4f  open at %.4f  peak %.4f (last 5 s)", floor, open, meterPeak)
+        meterPeak = 0
+        meterChunks = 0
+        DispatchQueue.main.async { log(line) }
     }
 
     /// Speech while there's no session: reopen it (unless one is already on its way).

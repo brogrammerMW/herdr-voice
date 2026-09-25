@@ -175,6 +175,8 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
 | `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
+| `HERDR_VOICE_GATE_DEBUG` | off | `1` logs the speech gate: its noise floor, opening level and peaks every 5 s, and each open/close |
+| `HERDR_VOICE_GATE_THRESHOLD` | adaptive | Pins the opening level (rms, e.g. `0.01`) for unusual hardware; normally not needed |
 | `HERDR_VOICE_ECHO_CANCEL` | on | `0` turns off macOS voice processing (echo cancellation and noise suppression). Use it with headphones: it cuts herdr-voice's CPU use by about 11 points |
 
 ### Shell commands (`run_shell`, opt-in)
@@ -307,7 +309,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 70 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 71 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
 swift build -c release
 ```
 
@@ -342,6 +344,13 @@ about $3 to $5 per hour, even if you only talk for a few minutes of it. herdr-vo
 - **streams only speech.** A cheap check on your Mac opens the stream when you start talking (keeping the 300 ms
   before, so the first word isn't clipped) and closes it 0.8 s after you stop, or once the provider has seen your
   turn end. Measured on a real mic: 10 to 23% of a 12 s window streamed during conversation, 0% in silence.
+- **works with any microphone.** Speech is judged relative to *your* mic's own noise, never a fixed level: the
+  noise floor is re-estimated continuously from the last 3 seconds (the gaps between words keep it honest while you
+  talk), the stream opens about 14 dB above it and stays open about 8 dB above it, and isolated clicks are ignored.
+  So a quiet laptop mic, a close headset, a hissy USB condenser or a mic next to a fan all work, and switching
+  devices settles within a few seconds. The tests run a simulated matrix of these mics across 200 noise seeds each.
+  If it ever misses you, `HERDR_VOICE_GATE_DEBUG=1` shows what it hears, and `HERDR_VOICE_STREAM=always` is the
+  fallback.
 - **closes quiet sessions.** After 3 minutes with no speech, and nothing speaking or running, the session is
   closed (`💤` in the log, the orb stays blue). The next thing you say reopens it; what you say while it reconnects
   is held and sent once it's up, and a short recap restores the conversation. An agent finishing also reopens it

@@ -1,58 +1,95 @@
 /// Decides which 20 ms mic chunks go to the provider, so only speech is streamed (providers bill per minute of
-/// audio). Energy-based and cheap; the provider's own voice detection still decides where turns begin and end.
+/// audio). The provider's own voice detection still decides where turns begin and end.
 ///
-/// - Opens after `onsetChunks` consecutive chunks above the threshold, and sends the `preRollChunks` before them
-///   too, so the start of the first word isn't clipped.
-/// - Stays open through `hangoverChunks` of quiet after speech (the silence the provider needs to see the turn
-///   end), and for as long as the provider says a turn is still in progress (`holdOpen`), up to `maxHoldChunks`.
-/// - The threshold is the larger of `minThreshold` and a multiple of a slowly adapting noise floor. Measured with
-///   echo cancellation on: silence p50 0.0001, p99 0.0018, max 0.0032 rms; speech is roughly 0.01 to 0.2.
+/// Works for any microphone because it judges speech relative to that mic's own noise, never by a fixed level:
+/// - The noise floor is the 20th-percentile chunk of the last `floorWindowChunks` (3 s): robust to noise that
+///   fluctuates and to one-off quiet or loud chunks. Gaps between words expose the noise even while someone
+///   talks, so the floor keeps adapting and can't lock up on a hissy mic, a fan, or a device switch.
+/// - It opens when `onsetChunks` in a row are `openRatio` above the floor (≈ +14 dB), and stays open while
+///   chunks are `holdRatio` above it (≈ +8 dB), above the noise's own swings, so noise can't hold it open while
+///   trailing, softer words still can.
+/// - `minThreshold` only rejects digital silence and near-silent noise; `overrideThreshold` pins the opening
+///   level for unusual hardware.
+/// - The `preRollChunks` before the onset are sent too, so the first word isn't clipped; it stays open through
+///   `hangoverChunks` of quiet (the silence the provider needs to see the turn end) and while the provider says a
+///   turn is still in progress (`holdOpen`), up to `maxHoldChunks`.
 public struct SpeechGate<Chunk> {
-    public static var minThreshold: Float { 0.006 }
+    public static var minThreshold: Float { 0.002 }
+    public static var openRatio: Float { 5 }       // ≈ +14 dB over the noise floor to open
+    public static var holdRatio: Float { 2.5 }     // ≈ +8 dB to stay open
     public static var onsetChunks: Int { 3 }       // 60 ms
     public static var preRollChunks: Int { 15 }    // 300 ms
     public static var hangoverChunks: Int { 40 }   // 800 ms
     public static var maxHoldChunks: Int { 400 }   // 8 s
+    public static var floorWindowChunks: Int { 150 } // 3 s
+    /// Audio needed before the first opening, so a hissy mic can't trigger it before its floor is known.
+    public static var warmupChunks: Int { 25 }       // 0.5 s
 
     public private(set) var isOpen = false
-    private var noiseFloor: Float = 0.0002
+    /// Fixed opening level instead of the adaptive one (HERDR_VOICE_GATE_THRESHOLD).
+    public var overrideThreshold: Float?
+    private var recent: [Float] = []
+    private var recentIndex = 0
     private var loudRun = 0
     private var quietRun = 0
+    /// Consecutive chunks above the hold level while open. One alone is a click or pop, not speech.
+    private var holdLoudRun = 0
     private var preRoll: [Chunk] = []
 
-    public init() {}
+    public init(overrideThreshold: Float? = nil) {
+        self.overrideThreshold = overrideThreshold
+    }
 
-    public var threshold: Float { max(Self.minThreshold, noiseFloor * 20) }
+    /// This mic's noise, whatever its gain or hiss: the 20th percentile of the last 3 s.
+    public var noiseFloor: Float {
+        guard !recent.isEmpty else { return 0 }
+        return recent.sorted()[recent.count / 5]
+    }
+    public var openThreshold: Float { overrideThreshold ?? max(Self.minThreshold, noiseFloor * Self.openRatio) }
+    public var holdThreshold: Float {
+        overrideThreshold.map { $0 * Self.holdRatio / Self.openRatio } ?? max(Self.minThreshold, noiseFloor * Self.holdRatio)
+    }
 
     /// Returns the chunks to send now: nothing while closed, the pre-roll plus this chunk when opening,
     /// this chunk while open.
     public mutating func process(_ chunk: Chunk, level: Float, holdOpen: Bool) -> [Chunk] {
-        let loud = level > threshold
-        if !loud {
-            // Track the floor from quiet chunks only: quickly down, slowly up.
-            noiseFloor += (level - noiseFloor) * (level < noiseFloor ? 0.1 : 0.005)
-        }
+        // Judge against the floor from *before* this chunk, then record it.
+        let open = openThreshold, hold = holdThreshold
+        remember(level)
         if isOpen {
-            quietRun = loud ? 0 : quietRun + 1
-            let hold = holdOpen && quietRun < Self.maxHoldChunks
-            if quietRun >= Self.hangoverChunks && !hold {
+            // Speech is never a lone 20 ms spike: an isolated click (a fan's tick, a key) doesn't restart the
+            // end-of-speech countdown; two loud chunks in a row do.
+            holdLoudRun = level > hold ? holdLoudRun + 1 : 0
+            quietRun = holdLoudRun >= 2 ? 0 : quietRun + 1
+            let providerHolding = holdOpen && quietRun < Self.maxHoldChunks
+            if quietRun >= Self.hangoverChunks && !providerHolding {
                 isOpen = false
                 loudRun = 0
                 preRoll.removeAll()
             }
             return [chunk]
         }
-        loudRun = loud ? loudRun + 1 : 0
+        loudRun = level > open ? loudRun + 1 : 0
         preRoll.append(chunk)
         if preRoll.count > Self.preRollChunks + Self.onsetChunks { preRoll.removeFirst() }
-        guard loudRun >= Self.onsetChunks else { return [] }
+        guard loudRun >= Self.onsetChunks, recent.count >= Self.warmupChunks else { return [] }
         isOpen = true
         quietRun = 0
+        holdLoudRun = 0
         defer { preRoll.removeAll() }
         return preRoll
     }
 
-    /// Forget any partial onset or pre-roll, e.g. after muting.
+    private mutating func remember(_ level: Float) {
+        if recent.count < Self.floorWindowChunks {
+            recent.append(level)
+        } else {
+            recent[recentIndex] = level
+            recentIndex = (recentIndex + 1) % Self.floorWindowChunks
+        }
+    }
+
+    /// Forget any partial onset or pre-roll, e.g. after muting. The noise floor is kept.
     public mutating func reset() {
         isOpen = false
         loudRun = 0
