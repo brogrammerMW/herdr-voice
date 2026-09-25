@@ -9,6 +9,8 @@ herdr-voice is a macOS plugin for Herdr. You speak; a realtime voice model (xAI 
 you, hands the real work to the Claude Code or Codex agent running in a Herdr pane, and tells you out loud when that
 agent is done or needs your approval. A glowing orb in the corner of your screen shows who is talking.
 
+Watch the herdr-voice demo video below:
+
 [![Watch the herdr-voice demo](https://img.youtube.com/vi/fLdyB1SUV_w/maxresdefault.jpg)](https://youtu.be/fLdyB1SUV_w)
 
 ![The orb in its five states](docs/orb-states.png)
