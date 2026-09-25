@@ -86,6 +86,9 @@ final class Realtime {
     /// Set when the provider announces why it's closing, read when the socket then fails.
     private var closeReason: Reconnect.Reason?
     private var hadSession = false
+    /// Greet on the next session that comes up: set at launch and when the model is switched, not for reconnects
+    /// (those are silent, and a session reopened by your speech shouldn't talk over you).
+    private var greetNext = true
     /// What was said, replayed into a renewed session so it still knows the conversation.
     private var recap = Recap()
     /// Agent reports that arrived while offline, delivered once the next session is up.
@@ -282,6 +285,11 @@ final class Realtime {
             send(.userText(context, expectsReply: false))
         }
         hadSession = true
+        if greetNext {
+            greetNext = false
+            addReplyText(Greeting.prompt)
+            if replies.wantReply() { requestResponse() }
+        }
         guard !outbox.isEmpty else { return }
         outbox.forEach(addReplyText)
         outbox.removeAll()
@@ -571,6 +579,7 @@ final class Realtime {
         resumeHandle = nil // resumption handles only mean something to the provider that issued them
         attempts = 0
         dormant = false
+        greetNext = true
         connect()
     }
 

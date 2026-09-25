@@ -63,3 +63,9 @@ func leaksAreCaught(text: String, reason: String) { #expect(stream(text) == .lea
     #expect(ServerEvent.decode(#"{"type":"response.output_audio_transcript.delta","delta":"Hi"}"#) == .assistantTranscriptDelta("Hi"))
     #expect(ServerEvent.decode(#"{"type":"response.audio_transcript.delta","delta":"Hi"}"#) == .assistantTranscriptDelta("Hi"))
 }
+
+@Test func theStartupGreetingIsAnIntroductionNotAScript() {
+    #expect(Greeting.prompt.contains("introduce yourself") && Greeting.prompt.contains("ready to help"))
+    #expect(Greeting.prompt.contains("own words"))
+    #expect(!Greeting.prompt.contains("Yes, I'm here"))
+}
