@@ -11,6 +11,23 @@ public enum Provider: String, CaseIterable {
         }
     }
 
+    /// As listed in the orb's menu, in this order.
+    public static let menuOrder: [Provider] = [.grok, .openai, .gemini]
+    public var menuTitle: String {
+        switch self {
+        case .grok: "Grok"
+        case .openai: "GPT"
+        case .gemini: "Gemini"
+        }
+    }
+
+    /// The voice to use for this provider. HERDR_VOICE_VOICE names a voice of the provider herdr-voice was
+    /// started with (e.g. Grok's `rex`); the others use their own default, since voice names differ per provider.
+    public func voice(startedWith: Provider, configured: String?) -> String {
+        if self == startedWith, let configured, !configured.isEmpty { return configured }
+        return defaultVoice
+    }
+
     public var keyEnv: String {
         switch self {
         case .openai: "OPENAI_API_KEY"

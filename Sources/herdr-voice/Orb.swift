@@ -72,8 +72,18 @@ final class Orb {
     private var link: CADisplayLink?
     private var idle = false
 
-    /// `onClick` for a plain click (mute), `onQuit` for the right-click menu's Quit item.
-    init(onClick: @escaping () -> Void, onQuit: @escaping () -> Void = { NSApp.terminate(nil) }) {
+    /// One entry in the right-click menu above Quit (the AI models).
+    struct MenuChoice {
+        let title: String
+        let checked: Bool
+        let enabled: Bool
+        let action: () -> Void
+    }
+
+    /// `onClick` for a plain click (mute); `menuChoices` is asked for fresh entries each time the right-click menu
+    /// opens (so the checkmark and key availability are current); `onQuit` for its Quit item.
+    init(onClick: @escaping () -> Void, menuChoices: @escaping () -> [MenuChoice] = { [] },
+         onQuit: @escaping () -> Void = { NSApp.terminate(nil) }) {
         let s = Orb.size
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: s, height: s),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -84,7 +94,8 @@ final class Orb {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
 
-        view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, onQuit: onQuit)
+        view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, menuChoices: menuChoices,
+                         onQuit: onQuit)
         view.wantsLayer = true
         let root = view.layer!
 
@@ -310,7 +321,10 @@ final class Orb {
     private final class ClickView: NSView {
         let onClick: () -> Void
         let onQuit: () -> Void
-        init(frame: NSRect, onClick: @escaping () -> Void, onQuit: @escaping () -> Void) {
+        let menuChoices: () -> [MenuChoice]
+        init(frame: NSRect, onClick: @escaping () -> Void, menuChoices: @escaping () -> [MenuChoice],
+             onQuit: @escaping () -> Void) {
+            self.menuChoices = menuChoices
             self.onClick = onClick
             self.onQuit = onQuit
             super.init(frame: frame)
@@ -325,6 +339,17 @@ final class Orb {
 
         private func showMenu(_ event: NSEvent) {
             let menu = NSMenu()
+            menu.autoenablesItems = false
+            let choices = menuChoices()
+            for choice in choices {
+                let item = NSMenuItem(title: choice.title, action: #selector(choiceChosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.state = choice.checked ? .on : .off
+                item.isEnabled = choice.enabled
+                item.representedObject = ActionBox(choice.action)
+                menu.addItem(item)
+            }
+            if !choices.isEmpty { menu.addItem(.separator()) }
             let quit = NSMenuItem(title: "Quit herdr-voice", action: #selector(quitChosen), keyEquivalent: "")
             quit.target = self
             menu.addItem(quit)
@@ -332,6 +357,7 @@ final class Orb {
         }
 
         @objc private func quitChosen() { onQuit() }
+        @objc private func choiceChosen(_ sender: NSMenuItem) { (sender.representedObject as? ActionBox)?.run() }
     }
 }
 
@@ -339,4 +365,10 @@ final class Orb {
 private final class FrameDriver: NSObject {
     var fire: () -> Void = {}
     @objc func step(_ link: CADisplayLink) { fire() }
+}
+
+/// Lets a menu item carry a Swift closure.
+private final class ActionBox: NSObject {
+    let run: () -> Void
+    init(_ run: @escaping () -> Void) { self.run = run }
 }

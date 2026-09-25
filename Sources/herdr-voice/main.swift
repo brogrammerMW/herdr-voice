@@ -71,8 +71,25 @@ if env["HERDR_ENV"] != "1" {
 
 if env["HERDR_VOICE_ECHO_CANCEL"] == "0" { log("echo cancellation off (HERDR_VOICE_ECHO_CANCEL=0): use headphones") }
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
-let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
-let orb = Orb(onClick: { session.toggleMute() }, onQuit: {
+let startedWith = provider
+let session = Realtime(provider: provider, key: key,
+                       voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
+/// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
+func modelChoices() -> [Orb.MenuChoice] {
+    Provider.menuOrder.map { candidate in
+        let available = candidate.apiKey(environment: env)
+        return Orb.MenuChoice(
+            title: candidate.menuTitle + (available == nil ? " (no key)" : ""),
+            checked: candidate == session.provider,
+            enabled: available != nil,
+            action: {
+                guard let found = candidate.apiKey(environment: env) else { return }
+                session.switchProvider(to: candidate, key: found.value,
+                                       voice: candidate.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
+            })
+    }
+}
+let orb = Orb(onClick: { session.toggleMute() }, menuChoices: modelChoices, onQuit: {
     session.shutdown()
     // A moment for the WebSocket close frame to go out.
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
