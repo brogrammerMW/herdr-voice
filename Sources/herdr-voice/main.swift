@@ -25,6 +25,29 @@ let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
     ?? env["HERDR_VOICE_PROVIDER"] ?? "grok"
 
+// One-shot commands.
+if args.count > 1 {
+    switch args[1] {
+    case "install-command": exit(installCommand())
+    case "uninstall-command": exit(uninstallCommand())
+    case "stop": exit(stopRunning())
+    case "help", "--help", "-h":
+        print("""
+        herdr-voice                    start the voice (in Herdr: in a pane below this one)
+        herdr-voice --here             start it in this pane
+        herdr-voice --provider NAME    use grok, openai or gemini
+        herdr-voice stop               stop the running voice
+        herdr-voice setup [NAME]       store an API key in the Keychain
+        herdr-voice install-command    put herdr-voice on your PATH (~/.local/bin)
+        herdr-voice uninstall-command  undo install-command
+        herdr-voice tool [NAME JSON]   run one of the voice's tools by hand
+        herdr-voice --orb-demo         show the orb only
+        """)
+        exit(0)
+    default: break
+    }
+}
+
 // herdr-voice setup [grok|openai|gemini]: store an API key, then exit.
 if args.count > 1, args[1] == "setup" {
     let name = args.count > 2 ? args[2] : providerName
@@ -100,10 +123,20 @@ guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use grok, openai or gemini\n".utf8))
     exit(2)
 }
+// In Herdr, a plain `herdr-voice` opens the voice in its own pane below and gives the shell back.
+if !Launch.runsHere(arguments: args, environment: env) {
+    if let pid = SingleInstance.runningPID() {
+        print("herdr-voice is already running\(pid > 0 ? " (pid \(pid))" : ""); stop it with herdr-voice stop")
+        exit(0)
+    }
+    if openVoicePane(provider: args.contains("--provider") ? providerName : nil, environment: env) { exit(0) }
+    log("the herdr-voice plugin isn't installed, so it runs in this pane")
+}
+
 // One listener at a time: a second copy would share the mic, hear the first one's voice and double the bill.
 let lock = SingleInstance.acquire()
 if let holder = lock.holder {
-    FileHandle.standardError.write(Data("herdr-voice is already running\(holder > 0 ? " (pid \(holder))" : ""); stop it first.\n".utf8))
+    FileHandle.standardError.write(Data("herdr-voice is already running\(holder > 0 ? " (pid \(holder))" : ""); stop it with herdr-voice stop.\n".utf8))
     exit(1)
 }
 

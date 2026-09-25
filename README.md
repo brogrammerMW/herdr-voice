@@ -71,20 +71,23 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 ## Install as a Herdr plugin (recommended)
 
 herdr-voice is a [Herdr plugin](https://herdr.dev/docs/plugins/). Install it from GitHub; Herdr shows what it will run,
-then builds it (a minute or two the first time):
+then builds it (a minute or two the first time) and puts the `herdr-voice` command in `~/.local/bin`:
 
 ```bash
 herdr plugin install brogrammerMW/herdr-voice
 ```
 
-Then, inside Herdr:
+Then, in any Herdr pane:
 
-1. **Add your API key:** `herdr plugin action invoke setup --plugin brogrammermw.herdr-voice` opens a small popup that
-   asks for it (hidden) and stores it in your macOS Keychain. Grok is the default; to use OpenAI or Gemini, set
-   `HERDR_VOICE_PROVIDER` in the settings file below, or run `.build/release/herdr-voice setup openai` from the
-   plugin's folder.
-2. **Start the voice:** `herdr plugin action invoke start --plugin brogrammermw.herdr-voice` opens it in a pane below
-   the current one. Allow microphone access when macOS asks. Close that pane to stop it.
+1. **Add your API key:** `herdr-voice setup` asks for it (hidden) and stores it in your macOS Keychain. Grok is the
+   default; `herdr-voice setup openai` or `herdr-voice setup gemini` for the others.
+2. **Start the voice:** `herdr-voice`. It opens in a pane below the one you typed in, and your shell stays free.
+   Allow microphone access when macOS asks. Stop it with `herdr-voice stop` or by closing its pane.
+   `herdr-voice --provider gemini` starts it with another model; `herdr-voice --here` runs it in the current pane.
+
+If your shell says `herdr-voice: command not found`, `~/.local/bin` isn't on your `PATH`: add
+`export PATH="$HOME/.local/bin:$PATH"` to your `~/.zshrc`.
+
 3. **Give it a key** (optional), in Herdr's `config.toml`:
 
    ```toml
@@ -103,11 +106,11 @@ there on purpose: they belong in the Keychain.
 **Before you install,** know what it does (Herdr doesn't review plugins): it builds with `swift build`, listens to
 your microphone while unmuted, streams your speech to the AI provider you chose, reads your agents' terminals to
 summarize them, and runs `herdr` commands in your session. See [Privacy and safety](#privacy-and-safety).
-Only one copy runs at a time; starting a second one refuses with "already running". The orb is herdr-voice's own
+Only one copy runs at a time; starting a second one says it's already running. The orb is herdr-voice's own
 macOS window, not a Herdr surface, so it floats over the Herdr window rather than inside it.
 
-To update, reinstall (`herdr plugin install brogrammerMW/herdr-voice` again); to remove,
-`herdr plugin uninstall brogrammermw.herdr-voice`.
+To update, reinstall (`herdr plugin install brogrammerMW/herdr-voice` again). To remove it,
+`herdr-voice uninstall-command` (removes the `~/.local/bin` link), then `herdr plugin uninstall brogrammermw.herdr-voice`.
 
 ## Quick start without the plugin
 
@@ -119,7 +122,7 @@ Three steps. The first build takes a minute or two.
 git clone https://github.com/brogrammerMW/herdr-voice.git
 cd herdr-voice
 swift build -c release
-mkdir -p ~/.local/bin && cp .build/release/herdr-voice ~/.local/bin/
+.build/release/herdr-voice install-command   # links it into ~/.local/bin
 ```
 
 If your shell then says `herdr-voice: command not found`, put `~/.local/bin` on your `PATH` once:
@@ -159,9 +162,9 @@ On first run macOS asks for microphone access for your terminal app; allow it. Y
 and a blue orb appears in the bottom-left of your Herdr window. Start talking. The pane shows a live transcript: what you said,
 what the voice said, and every Herdr tool call it makes (`→`) and every agent that finishes (`←`).
 
-Quit with `Ctrl+C` in its pane, or right-click the orb → **Quit herdr-voice**.
+Quit with `herdr-voice stop`, `Ctrl+C` in its pane, or right-click the orb → **Quit herdr-voice**.
 
-To update later: `git pull && swift build -c release && cp .build/release/herdr-voice ~/.local/bin/`.
+To update later: `git pull && swift build -c release` (the link picks up the new build).
 
 ### Run a tool from the command line
 
