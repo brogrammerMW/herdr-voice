@@ -7,9 +7,9 @@ import os
 final class Realtime {
     enum Status { case connecting, live, disconnected }
 
-    private let provider: Provider
-    private let key: String
-    private let voice: String
+    private(set) var provider: Provider
+    private var key: String
+    private var voice: String
     let audio = Audio()
     private var socket: URLSessionWebSocketTask?
     /// The provider's wire protocol for the current connection (see Wire). Replaced on every connect.
@@ -524,6 +524,32 @@ final class Realtime {
         case .ignored:
             break
         }
+    }
+
+    /// Switches to another provider from the orb's menu: the current session closes cleanly (its billing stops),
+    /// the new one opens at once and gets the recap, so the conversation carries over. Tool results meant for the
+    /// old session are dropped (its calls can't be answered elsewhere); agent reports still arrive in the new one.
+    func switchProvider(to newProvider: Provider, key newKey: String, voice newVoice: String) {
+        guard newProvider != provider else { return }
+        log("⇄ switching to \(newProvider.menuTitle) (voice \(newVoice))")
+        if let old = socket {
+            socket = nil // its close must not count as a failure
+            old.cancel(with: .normalClosure, reason: nil)
+        }
+        keepalive?.cancel()
+        keepalive = nil
+        _ = audio.interrupt() // stop the old provider's voice mid-sentence
+        droppingAudio = false
+        status = .disconnected
+        replies.reset()
+        awaitingCreated = false
+        provider = newProvider
+        key = newKey
+        voice = newVoice
+        resumeHandle = nil // resumption handles only mean something to the provider that issued them
+        attempts = 0
+        dormant = false
+        connect()
     }
 
     /// Replaces the connection before the provider drops it, resuming the same session where supported.

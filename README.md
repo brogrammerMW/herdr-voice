@@ -124,7 +124,7 @@ thing, the voice asks which one you mean instead of guessing.
 | Control | Action |
 |---|---|
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
-| Right-click (or control-click) the orb | Menu with **Quit herdr-voice**, which closes the provider session and exits |
+| Right-click (or control-click) the orb | Menu: switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out) or **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
 | Talk over the voice | Stop it and listen to you |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |
@@ -177,7 +177,7 @@ Everything is set with environment variables (and one flag):
 | `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
 | `GEMINI_API_KEY` | | Gemini key, if it isn't in the Keychain |
 | `HERDR_VOICE_GEMINI_MODEL` | `gemini-2.5-flash-native-audio-latest` | Gemini Live model, e.g. `gemini-3.8-live` if your plan has quota for it |
-| `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI) | Voice ID, passed straight to the provider |
+| `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI), `Kore` (Gemini) | Voice ID for the provider herdr-voice starts with; models switched to from the orb's menu use their own default voice |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
@@ -356,7 +356,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 99 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
+swift test           # 103 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
 swift build -c release
 ```
 
@@ -367,6 +367,7 @@ Sources/
     Events.swift         # server event decoding, spoken "stop" detection
     Herdr.swift          # tool schemas and herdr CLI calls, focus resolution
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
+    ModelMenu.swift      # the orb's AI-model menu entries
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
     SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
