@@ -10,12 +10,17 @@ platforms = ["macos"]
 [[build]]
 command = ["swift", "build", "-c", "release"]
 
+# Puts `herdr-voice` on your PATH (a link in ~/.local/bin), so typing herdr-voice in any pane starts the voice.
+# Undo with: herdr-voice uninstall-command
+[[build]]
+command = [".build/release/herdr-voice", "install-command"]
+
 # The voice itself: a split pane showing the live transcript. Closing the pane stops it.
 [[panes]]
 id = "voice"
 title = "herdr-voice"
 placement = "split"
-command = [".build/release/herdr-voice"]
+command = [".build/release/herdr-voice", "--here"]
 
 # Store an API key in the macOS Keychain (hidden input).
 [[panes]]
