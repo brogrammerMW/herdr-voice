@@ -11,6 +11,8 @@ agent is done or needs your approval. A glowing orb in the corner of your screen
 
 Watch the herdr-voice demo video below:
 
+<p align="center"><a href="assets/herdr-voice-launch.mp4"><img src="assets/herdr-voice-launch.webp" width="88%" alt="Animation: agent status cards, then you tell herdr-voice to have claude-2 run the tests, the orb listens and later speaks the result, one sentence creates a worktree and starts Claude in it, and the install command is typed out" /></a></p>
+
 [![Watch the herdr-voice demo](https://img.youtube.com/vi/fLdyB1SUV_w/maxresdefault.jpg)](https://youtu.be/fLdyB1SUV_w)
 
 ![The orb in its five states](docs/orb-states.png)
@@ -502,6 +504,9 @@ swift test           # 131 tests: plugin config and single-instance lock, starti
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
+
+The launch videos in `assets/` (square for this README, 16:9 with an original house track for YouTube and X) are
+drawn and scored in code; `tools/launch-video/make.sh` rebuilds them (needs ffmpeg and `brew install webp`).
 
 The plugin manifest is `herdr-plugin.toml`. Bump its `version` for each release, and keep `min_herdr_version` at the
 oldest Herdr that has every command herdr-voice uses.
