@@ -36,6 +36,24 @@ public enum Provider: String, CaseIterable {
         }
     }
 
+    /// Where to create a key, shown by `herdr-voice setup`.
+    public var keyPage: String {
+        switch self {
+        case .openai: "https://platform.openai.com/api-keys"
+        case .grok: "https://console.x.ai"
+        case .gemini: "https://aistudio.google.com/apikey"
+        }
+    }
+
+    /// How this provider's keys start, to catch a key pasted for the wrong provider.
+    public var keyPrefix: String {
+        switch self {
+        case .openai: "sk-"
+        case .grok: "xai-"
+        case .gemini: "AIza"
+        }
+    }
+
     /// The connection request. OpenAI and xAI take the key as a bearer header. Gemini Live only accepts it as a
     /// `key` query parameter, so this URL must never be logged (nothing in herdr-voice logs URLs).
     public func request(key: String) -> URLRequest {
@@ -127,6 +145,36 @@ public enum Provider: String, CaseIterable {
 /// every rebuild, since each build has a different code signature. The secret only travels over a private pipe:
 /// the command line carries just the service name, and stderr ("item not found") is discarded.
 public enum Keychain {
+    /// A pasted key, tidied: surrounding whitespace and quotes dropped. Nil unless what's left is only the
+    /// characters API keys use, which also keeps it safe inside the quoted `security` command below.
+    public static func cleanKey(_ raw: String) -> String? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        guard !key.isEmpty, key.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else { return nil }
+        return key
+    }
+
+    /// The `security -i` command line that saves (or replaces) `value`. Sent over a pipe, never as an argument,
+    /// so the key doesn't show up in the process list or shell history. `value` must come from `cleanKey`.
+    static func storeCommand(service: String, account: String, value: String) -> String {
+        "add-generic-password -U -a \"\(account)\" -s \(service) -l \"herdr-voice \(service)\" -w \"\(value)\"\n"
+    }
+
+    /// Saves a key cleaned by `cleanKey` in the login Keychain, where `password(service:)` finds it.
+    public static func store(service: String, value: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["-i"]
+        let input = Pipe()
+        p.standardInput = input
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return false }
+        input.fileHandleForWriting.write(Data(storeCommand(service: service, account: NSUserName(), value: value).utf8))
+        try? input.fileHandleForWriting.close()
+        p.waitUntilExit()
+        return p.terminationStatus == 0 && password(service: service) == value
+    }
+
     public static func password(service: String) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
