@@ -25,35 +25,33 @@ private let herdrWin = win(502, "repo — herdr voice — herdr ▸ -zsh — 269
 private let otherWin = win(600, "~ — -zsh — 80×24")
 private let tabStrip = win(11248, nil, h: 32)
 
-@Test func pinsWhenTheHerdrWindowIsFrontmost() {
-    #expect(WindowPin.target(windows: [tabStrip, herdrWin, otherWin], hosts: [terminal], frontmost: terminal) == herdrWin)
+@Test func pinsToTheHerdrWindow() {
+    #expect(WindowPin.target(windows: [tabStrip, herdrWin, otherWin], hosts: [terminal]) == herdrWin)
 }
 
-@Test func hidesWhenAnotherAppIsFrontmost() {
-    #expect(WindowPin.target(windows: [herdrWin], hosts: [terminal], frontmost: 999) == nil)
-    #expect(WindowPin.target(windows: [herdrWin], hosts: [terminal], frontmost: nil) == nil)
+@Test func staysOnTheHerdrWindowWhenAnotherAppOrWindowIsInFront() {
+    // Focus moved elsewhere: another app's window is in front, or another Terminal window. Still pinned, still shown.
+    let otherApp = win(9, "Safari", pid: 42)
+    #expect(WindowPin.target(windows: [otherApp, herdrWin], hosts: [terminal]) == herdrWin)
+    #expect(WindowPin.target(windows: [otherWin, herdrWin], hosts: [terminal]) == herdrWin)
 }
 
-@Test func hidesWhenAnotherTerminalWindowOrTabIsInFront() {
-    #expect(WindowPin.target(windows: [otherWin, herdrWin], hosts: [terminal], frontmost: terminal) == nil)
-    // Herdr's tab not selected: its window exists but is off screen, so the orb must not sit on the other tab.
-    let herdrTabHidden = win(502, herdrWin.name, shown: false)
-    #expect(WindowPin.target(windows: [otherWin, herdrTabHidden], hosts: [terminal], frontmost: terminal) == nil)
+@Test func hidesOnlyWhenTheHerdrWindowIsntOnScreen() {
+    // Minimized, on another Space, or its terminal tab not selected: the window exists but isn't shown.
+    let herdrHidden = win(502, herdrWin.name, shown: false)
+    #expect(WindowPin.target(windows: [otherWin, herdrHidden], hosts: [terminal]) == nil)
 }
 
-@Test func whenNoTitleMentionsHerdrFollowsTheFrontWindow() {
-    #expect(WindowPin.target(windows: [otherWin], hosts: [terminal], frontmost: terminal) == otherWin)
-}
-
-@Test func withoutReadableTitlesFollowsTheFrontWindow() {
-    let a = win(1, nil), b = win(2, nil)
-    #expect(WindowPin.target(windows: [a, b], hosts: [terminal], frontmost: terminal) == a)
+@Test func whenNoTitleMentionsHerdrFollowsTheTerminalsFrontWindow() {
+    #expect(WindowPin.target(windows: [otherWin], hosts: [terminal]) == otherWin)
+    let a = win(1, nil), b = win(2, nil)                // titles unreadable
+    #expect(WindowPin.target(windows: [a, b], hosts: [terminal]) == a)
 }
 
 @Test func ignoresOtherAppsAndNonDocumentWindows() {
     let floating = win(3, "herdr overlay", layer: 3)
     let otherApp = win(4, "herdr docs", pid: 42)
-    #expect(WindowPin.target(windows: [otherApp, floating, herdrWin], hosts: [terminal], frontmost: terminal) == herdrWin)
+    #expect(WindowPin.target(windows: [otherApp, floating, herdrWin], hosts: [terminal]) == herdrWin)
 }
 
 @Test func mergeAppendsCachedWindowsThatAreNotOnScreenNow() {
@@ -62,5 +60,5 @@ private let tabStrip = win(11248, nil, h: 32)
     #expect(merged.map(\.number) == [600, 502])       // on-screen order first, no duplicates
     #expect(merged.last?.isOnScreen == false)
     // Which is exactly what keeps the orb off another tab.
-    #expect(WindowPin.target(windows: merged, hosts: [terminal], frontmost: terminal) == nil)
+    #expect(WindowPin.target(windows: merged, hosts: [terminal]) == nil)
 }

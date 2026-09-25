@@ -30,7 +30,7 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
   approval, the voice interrupts with a one- or two-sentence summary.
 - **Live orb, pinned to Herdr.** An orb sits in the bottom-left of the terminal window running Herdr and follows it
-  around. It only shows while that window is in front. Colour blobs drift inside it; your voice pushes them outward,
+  around, staying visible even when you click into another app. Colour blobs drift inside it; your voice pushes them outward,
   the assistant's voice lights a pulsing core. Click it to mute.
 - **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
   forge on?"), each one only after you approve it out loud.
@@ -138,10 +138,11 @@ use while muted.
 ### Where the orb shows
 
 The orb is pinned to the terminal window running Herdr (Terminal, iTerm, Ghostty, and so on), just inside its
-bottom-left corner, and follows it when you move or resize it. It hides when:
+bottom-left corner, and follows it when you move or resize it. It **stays visible when you click into another app
+or another window**: focus doesn't matter, it floats above them on the Herdr window's corner. It hides only when the
+Herdr window itself isn't shown:
 
-- another app is in front,
-- another window of the same terminal is in front of Herdr's,
+- the window is minimized or on another Space,
 - a different tab of that terminal is selected.
 
 herdr-voice finds that window without extra permissions. It walks up from itself (and from any running `herdr`
@@ -336,7 +337,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 85 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
+swift test           # 84 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
 swift build -c release
 ```
 

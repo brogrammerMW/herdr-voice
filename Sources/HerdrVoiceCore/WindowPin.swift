@@ -47,17 +47,17 @@ public enum WindowPin {
     }
 
     /// The window to pin to, or nil to hide the orb. `windows` is all windows, on-screen ones front to back.
-    /// Shows only while a host app is frontmost and its front window is the Herdr one: another app in front,
-    /// another window of the terminal in front, or a different terminal tab selected all hide the orb.
-    public static func target(windows: [Window], hosts: Set<Int32>, frontmost: Int32?) -> Window? {
-        guard let front = frontmost, hosts.contains(front) else { return nil }
+    ///
+    /// Focus doesn't matter: the orb stays on the Herdr window, and visible, while that window is on screen, even
+    /// with another app or another terminal window in front. It hides only when the Herdr window itself isn't
+    /// shown: minimized, on another Space, or its terminal tab isn't the selected one.
+    public static func target(windows: [Window], hosts: Set<Int32>) -> Window? {
         // Normal document windows only; skips tab strips, sheets' chrome and other small helper windows.
-        let own = windows.filter { $0.pid == front && $0.layer == 0 && $0.frame.width >= 200 && $0.frame.height >= 100 }
-        guard let top = own.first(where: \.isOnScreen) else { return nil }
+        let own = windows.filter { hosts.contains($0.pid) && $0.layer == 0 && $0.frame.width >= 200 && $0.frame.height >= 100 }
         let isHerdr: (Window) -> Bool = { $0.name?.localizedCaseInsensitiveContains("herdr") == true }
-        // If any window of the terminal, shown or not, is recognizably Herdr's, pin only when it is the front one;
-        // that hides the orb over other windows and other tabs. If none is (titles unreadable, or the terminal
-        // never shows "herdr"), the best available guess is the terminal's front window.
-        return own.contains(where: isHerdr) ? (isHerdr(top) ? top : nil) : top
+        // Titles identify Herdr's window (shown or not): pin to it only while it is on screen.
+        if own.contains(where: isHerdr) { return own.first { isHerdr($0) && $0.isOnScreen } }
+        // No title mentions herdr (unreadable, or the terminal never shows it): the terminal's front window.
+        return own.first(where: \.isOnScreen)
     }
 }
