@@ -1,5 +1,8 @@
 # herdr-voice
 
+I really like ChatGPT's voice agent and decided to create a version what would run native in Herdr.  Enjoy! 
+                                                                            - Marcus aka BrogrammerMW
+
 **Talk to the coding agents in your [Herdr](https://herdr.dev) panes, and hear them talk back.**
 
 herdr-voice is a small macOS add-on for Herdr. You speak; a realtime voice model (xAI Grok or OpenAI) understands
