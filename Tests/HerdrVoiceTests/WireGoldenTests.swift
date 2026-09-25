@@ -16,7 +16,16 @@ private func sha(_ obj: [String: Any]) -> String {
     (Provider.grok, "10ad0d4bfe0c876c370dd7ff6366a43dec38a917134bfa276ee3f596a0a3ce5b"),
 ])
 func setupGolden(provider: Provider, expected: String) {
-    #expect(sha(provider.sessionUpdate(instructions: "INSTR", voice: "VOICE")) == expected)
+    #expect(sha(withoutLaterTools(provider.sessionUpdate(instructions: "INSTR", voice: "VOICE"))) == expected)
+}
+
+/// Tools added after the recording (workspace/tab/worktree management) are left out; everything else must match.
+private func withoutLaterTools(_ update: [String: Any]) -> [String: Any] {
+    guard var session = update["session"] as? [String: Any], let tools = session["tools"] as? [[String: Any]] else { return update }
+    session["tools"] = tools.filter { !HerdrTools.manageTools.contains($0["name"] as? String ?? "") }
+    var out = update
+    out["session"] = session
+    return out
 }
 
 @Test("every OpenAI/xAI server event decodes as it did", arguments: [
