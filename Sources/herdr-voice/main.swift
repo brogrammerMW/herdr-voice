@@ -76,17 +76,12 @@ let session = Realtime(provider: provider, key: key,
                        voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
 func modelChoices() -> [Orb.MenuChoice] {
-    Provider.menuOrder.map { candidate in
-        let available = candidate.apiKey(environment: env)
-        return Orb.MenuChoice(
-            title: candidate.menuTitle + (available == nil ? " (no key)" : ""),
-            checked: candidate == session.provider,
-            enabled: available != nil,
-            action: {
-                guard let found = candidate.apiKey(environment: env) else { return }
-                session.switchProvider(to: candidate, key: found.value,
-                                       voice: candidate.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
-            })
+    ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
+        Orb.MenuChoice(title: entry.title, checked: entry.checked, enabled: entry.enabled) {
+            guard let found = entry.provider.apiKey(environment: env) else { return }
+            session.switchProvider(to: entry.provider, key: found.value,
+                                   voice: entry.provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
+        }
     }
 }
 let orb = Orb(onClick: { session.toggleMute() }, menuChoices: modelChoices, onQuit: {
