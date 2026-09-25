@@ -1,11 +1,11 @@
 # herdr-voice
 
-I really like ChatGPT's voice agent and decided to create a version what would run native in Herdr.  Enjoy! 
+I really like ChatGPT's voice agent and decided to create a version that would run natively in Herdr. Enjoy!
                                                                             - Marcus aka BrogrammerMW
 
 **Talk to the coding agents in your [Herdr](https://herdr.dev) panes, and hear them talk back.**
 
-herdr-voice is a small macOS add-on for Herdr. You speak; a realtime voice model (xAI Grok or OpenAI) understands
+herdr-voice is a small macOS add-on for Herdr. You speak; a realtime voice model (xAI Grok, OpenAI or Google Gemini) understands
 you, hands the real work to the Claude Code or Codex agent running in a Herdr pane, and tells you out loud when that
 agent is done or needs your approval. A glowing orb in the corner of your screen shows who is talking.
 
@@ -24,7 +24,8 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 ## Features
 
 - **Hands-free voice chat.** The mic stays open, with macOS echo cancellation so it works on speakers too. Talk
-  naturally, and interrupt the voice any time by talking over it.
+  naturally, and interrupt the voice any time by talking over it. Its own echo or background noise doesn't count as
+  an interruption.
 - **Drives your Herdr agents.** It lists the agents in your session, sends them work, reads what they are doing,
   answers their approval prompts when you say so, and switches your view to a workspace, tab or agent.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
@@ -35,11 +36,13 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 - **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
   forge on?"), each one only after you approve it out loud.
 - **Summaries only, enforced.** Replies are one or two sentences with no code, paths, file names, URLs or diffs read
-  aloud. That isn't just an instruction: herdr-voice checks the live transcript and cuts the voice off if it breaks
-  the rule.
+  aloud. That isn't just an instruction: herdr-voice caps how long a reply can run and corrects the model when it
+  reads code aloud (see [How it talks](#how-it-talks)).
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
-- **Choice of provider and voice.** Grok (default) or OpenAI, and any of their voices: Eve, Rex, Ara, Sal, Leo, or a
-  custom cloned voice on Grok.
+- **Choice of provider and voice.** Grok (default), OpenAI or Gemini Live, and any of their voices (Eve, Rex, Ara,
+  Sal, Leo, or a custom cloned voice on Grok). Switch models on the fly from the orb's right-click menu.
+- **Cheap to leave running.** Only your speech is streamed (silence never leaves the Mac), quiet sessions close
+  themselves, and dropped connections reconnect on their own (see [Cost](#cost)).
 - **Safe by default.** Anything that approves, sends on its own initiative, or destroys (approving an agent's prompt,
   closing a workspace or tab, removing a worktree) needs your spoken "yes". Agent output is treated as untrusted data.
   It never closes the workspace it runs in and never force-removes a dirty worktree.
@@ -51,32 +54,45 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 | macOS | 14 Sonoma or later (developed on macOS 26) |
 | Swift | 5.10 or later: Xcode, or the Xcode Command Line Tools (`xcode-select --install`) |
 | Herdr | Tested with 0.9.0. `herdr` must be on your `PATH` |
-| API key | An [xAI](https://console.x.ai) key (`XAI_API_KEY`) or an [OpenAI](https://platform.openai.com) key (`OPENAI_API_KEY`) |
+| API key | At least one of: an [xAI](https://console.x.ai) key (`XAI_API_KEY`), an [OpenAI](https://platform.openai.com) key (`OPENAI_API_KEY`), or a [Google AI Studio](https://aistudio.google.com) key (`GEMINI_API_KEY`) |
 
-## Install
+## Quick start
+
+Three steps. The first build takes a minute or two.
+
+**1. Build and install**
 
 ```bash
 git clone https://github.com/brogrammerMW/herdr-voice.git
 cd herdr-voice
 swift build -c release
+mkdir -p ~/.local/bin && cp .build/release/herdr-voice ~/.local/bin/
 ```
 
-The binary lands at `.build/release/herdr-voice`. To run it from anywhere, copy it onto your `PATH`:
+If your shell then says `herdr-voice: command not found`, put `~/.local/bin` on your `PATH` once:
+`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`.
+There are no third-party dependencies; everything (audio, WebSocket, hotkeys, the orb) uses Apple frameworks.
+
+**2. Add your API key**
 
 ```bash
-cp .build/release/herdr-voice ~/.local/bin/
+herdr-voice setup            # Grok (the default)
+herdr-voice setup openai     # or OpenAI
+herdr-voice setup gemini     # or Gemini
 ```
 
-There are no third-party dependencies. Everything (audio, WebSocket, hotkeys, the orb) uses Apple frameworks.
+It shows where to create the key, then asks you to paste it. Nothing you type is shown, and the key goes straight
+into your macOS login Keychain; it's never written to a file, your shell history or the process list. It warns you
+if the key looks like it belongs to a different provider. Skipped this step? The first `herdr-voice` run asks for
+the key too. See [API keys](#api-keys) for replacing or removing one.
 
-## Run
+**3. Run it inside a Herdr pane**
 
-Start it **inside a Herdr pane**, so its commands target your session. A small pane under your main one works well:
+Start it in a Herdr pane, so its commands target your session. A small pane under your main one works well:
 
 ```bash
 herdr pane split --current --direction down --no-focus    # optional: make a pane for it
-security add-generic-password -a "$USER" -s XAI_API_KEY -w # once: stores your key in the Keychain (prompts for it)
-herdr-voice                                                 # or .build/release/herdr-voice
+herdr-voice
 ```
 
 On first run macOS asks for microphone access for your terminal app; allow it. You should see:
@@ -84,12 +100,15 @@ On first run macOS asks for microphone access for your terminal app; allow it. Y
 ```text
 🔑 XAI_API_KEY from the Keychain
 ● connecting to grok — speak any time, ⌥⌘M mutes, Esc stops speech
+● connected
 ```
 
 and a blue orb appears in the bottom-left of your Herdr window. Start talking. The pane shows a live transcript: what you said,
 what the voice said, and every Herdr tool call it makes (`→`) and every agent that finishes (`←`).
 
-Quit with `Ctrl+C` in its pane.
+Quit with `Ctrl+C` in its pane, or right-click the orb → **Quit herdr-voice**.
+
+To update later: `git pull && swift build -c release && cp .build/release/herdr-voice ~/.local/bin/`.
 
 ### Try the orb without a key
 
@@ -126,7 +145,7 @@ thing, the voice asks which one you mean instead of guessing.
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
 | Right-click (or control-click) the orb | Menu: switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out) or **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
-| Talk over the voice | Stop it and listen to you |
+| Talk over the voice | Stop it and listen to you (only when your mic actually heard you, so echo and noise don't cut it off) |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |
 
 `Esc` is only captured while the assistant is actually speaking, so every other app keeps its `Esc` the rest of the
@@ -180,6 +199,7 @@ Everything is set with environment variables (and one flag):
 | `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI), `Kore` (Gemini) | Voice ID for the provider herdr-voice starts with; models switched to from the orb's menu use their own default voice |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
+| `HERDR_VOICE_DEBUG_EVENTS` | off | `1` logs every provider event except audio (resumption handles are masked), to diagnose a provider |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
 | `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
@@ -204,26 +224,29 @@ commands itself, which is handy for quick checks where prompting an agent is ove
 
 ### API keys
 
+`herdr-voice setup [grok|openai|gemini]` is all you need: run it again to replace a key (after rotating one, say).
 herdr-voice looks for the key in the **macOS Keychain first**, then in the environment variable. Keeping it in the
 Keychain means it survives logout and restart, works in every new Herdr pane without any shell setup, and never lands
 in your shell history (which is where `export XAI_API_KEY=...` typed at a prompt ends up).
 
-```bash
-security add-generic-password -a "$USER" -s XAI_API_KEY -w       # Grok; you'll be prompted for the key
-security add-generic-password -a "$USER" -s OPENAI_API_KEY -w    # OpenAI, if you use it
-security add-generic-password -U -a "$USER" -s XAI_API_KEY -w    # replace a key after rotating it
-security delete-generic-password -s XAI_API_KEY                  # remove it
-```
+| Provider | Keychain entry / variable | Create a key at |
+|---|---|---|
+| Grok | `XAI_API_KEY` | [console.x.ai](https://console.x.ai) |
+| OpenAI | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Gemini | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
-The service name is the variable name. herdr-voice reads it through the same `security` tool, so there is no access
-prompt, not even after rebuilding. The key travels over a private pipe, and startup only logs where it came from
-(`🔑 XAI_API_KEY from the Keychain`), never the value. If you did export a key at a prompt before, remove it from
-`~/.zsh_history` and rotate it.
+Keys are stored as generic passwords whose service is the variable name, labelled `herdr-voice XAI_API_KEY` and
+so on in Keychain Access. Both saving and reading go through Apple's `security` tool, so there is no access prompt,
+not even after rebuilding. When saving, the key is passed to it over a private pipe, never as a command-line
+argument. Startup only logs where the key came from (`🔑 XAI_API_KEY from the Keychain`), never the value.
+
+To remove a key: `security delete-generic-password -s XAI_API_KEY`. If you ever exported a key at a prompt, remove
+it from `~/.zsh_history` and rotate it.
 
 ### Gemini Live
 
 `--provider gemini` uses Google's Gemini Live API. Store a key from Google AI Studio with
-`security add-generic-password -a "$USER" -s GEMINI_API_KEY -w`. Everything else works the same: tools, the orb,
+`herdr-voice setup gemini`. Everything else works the same: tools, the orb,
 speech-only streaming, interrupts and confirmations. Differences worth knowing:
 
 - **Cheaper,** and Google has a free tier with rate limits (check current pricing).
@@ -257,13 +280,16 @@ curl -s https://api.x.ai/v1/tts/voices -H "Authorization: Bearer $XAI_API_KEY"
 
 ### Models
 
+Switch between them while it runs from the orb's right-click menu: the current session closes and the new model
+starts with its own default voice and a short recap of the conversation. Models without a key are greyed out.
+
 | Provider | Model | Endpoint |
 |---|---|---|
 | Grok | `grok-voice-latest` | `wss://api.x.ai/v1/realtime` |
 | OpenAI | `gpt-realtime-2.1` | `wss://api.openai.com/v1/realtime` |
 | Gemini | `gemini-2.5-flash-native-audio-latest` (override with `HERDR_VOICE_GEMINI_MODEL`) | Gemini Live (`BidiGenerateContent` WebSocket) |
 
-Both are billed per minute of audio by the provider; check their pricing pages. With Grok, the voice can also search the
+All three bill by audio (per minute or per token); check their pricing pages. With Grok, the voice can also search the
 web on its own ("what's the latest version of Swift?").
 
 ## How it works with Herdr
@@ -294,13 +320,22 @@ speak up on its own when an agent finishes.
 ## How it talks
 
 The voice gives high-level summaries and speaks up on its own only when an agent finishes, fails or needs approval.
-The rules are in its instructions, and herdr-voice also enforces them from the live transcript (`SpeechPolicy`):
+The rules are in its instructions, and herdr-voice also enforces them in code (`SpeechPolicy`):
 
-- **Two sentences max.** When a third sentence starts, generation is cancelled; audio already on its way still
-  plays, so the cut lands at about the end of sentence two. The pane logs `✂  cut after 2 sentences`.
+- **Short replies.** Two sentences take well under 20 seconds, so a reply that passes 20 seconds of audio is
+  stopped: generation is cancelled, what you are already hearing plays out, and the pane logs
+  `✂  cut after 20 s of speech`. The limit is measured on the audio, not the transcript, because providers send the
+  transcript well ahead of the audio (Grok by about 10 seconds), and cutting on the transcript used to drop words
+  you hadn't heard yet.
 - **No code aloud.** If the transcript shows a file path, a file name with a code extension, a URL, backticks,
-  braces, `()` or diff markers, the voice is stopped at once and asked, once, to say the same thing as a plain
-  summary. The pane logs `⏹  stopped (was reading a file path aloud)`.
+  braces, `()` or diff markers, the reply is allowed to finish rather than being cut mid-word, and the model then gets
+  a note telling it to describe such things in plain words. No extra reply is spoken. The pane logs
+  `⚠  the voice read a file path aloud; it will be told not to`.
+- **Real interruptions only.** The provider's speech detection also hears the voice's own echo and room noise. The
+  voice only stops for you when your mic heard a speech-level sound in the last 1.5 seconds; otherwise it keeps
+  talking and the pane logs `… kept talking: the mic didn't hear you (echo or noise)`.
+- **One reply at a time.** Several tool results or agent reports arriving together are answered in a single reply,
+  and identical tool calls repeated within a few seconds are not run twice, so the voice doesn't talk over itself.
 - **Exception:** when asking you to approve a `run_shell` command, it may read that command aloud.
 
 Want the details? Ask it to show you the agent's pane ("show me claude-2") and read them there.
@@ -308,7 +343,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 ## Privacy and safety
 
 - **What leaves your Mac.** Only while you're talking: mic audio is checked on your Mac and only speech is streamed
-  to the provider you chose (xAI or OpenAI), in 20 ms chunks, starting 300 ms before you start and ending 0.8 s
+  to the provider you chose (xAI, OpenAI or Google), in 20 ms chunks, starting 300 ms before you start and ending 0.8 s
   after you stop. Silence never leaves the Mac, and after 3 quiet minutes the session is closed entirely until you
   speak again. When you ask
   what an agent is doing, or when an agent finishes, the last lines of that agent's terminal are sent to the provider
@@ -330,8 +365,9 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   [Shell commands](#shell-commands-run_shell-opt-in)). Its output is sent to the provider for the summary.
 - **The agents keep their own guardrails.** herdr-voice types into Claude Code or Codex; their permission prompts still
   apply.
-- **API keys** are read from the Keychain (or the environment), never logged, and only sent as the `Authorization`
-  header to the provider.
+- **API keys** are read from the Keychain (or the environment), never logged, and only sent to the provider: as the
+  `Authorization` header for xAI and OpenAI, and in the connection URL for Gemini (the only way Gemini Live accepts
+  it).
 
 ## Limitations
 
@@ -341,41 +377,50 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 - A spoken "stop" takes effect once your words are transcribed, so a word or two may still play first. `Esc` is
   immediate.
 - While the voice is talking, `Esc` goes to herdr-voice, not the app you are typing in.
-- Speech enforcement works on the transcript, which runs slightly ahead of the audio, so a cut can land a word or two
-  either side of the sentence boundary. It relies on the provider streaming transcript deltas
-  (`response.output_audio_transcript.delta`); without them only the instructions apply.
+- The 20-second cap stops a reply wherever it is, possibly mid-sentence; it is a backstop for a rambling model, not
+  the usual way replies end. Code-aloud detection relies on the provider streaming a transcript of its speech;
+  without it only the instructions apply.
+- Talking over the voice very quietly may not interrupt it, since the mic has to hear a clear onset over the echo.
+  `Esc` and "stop" always work. If the provider itself cancels a reply it mistook echo for speech, audio already
+  received still plays, but the rest of that reply is lost.
 - `run_shell` stops the shell when it times out, but anything it started in the background keeps running.
 - Providers end sessions on their own (xAI after 15 minutes idle, OpenAI at 60 minutes). herdr-voice renews them
   automatically and replays a short recap of the conversation into the new session, but the model's memory beyond
   that recap starts fresh. While muted it waits and reconnects when you unmute, so no idle session is billed.
-- If an agent finishes while the voice is still talking, its summary can be refused by the provider ("active
-  response"); ask "what did it do?" to hear it.
-- Developed and used live with Grok. The OpenAI path uses the same protocol but has seen less real use.
+- Developed and used live mostly with Grok; Gemini Live has been verified live too. The OpenAI path uses the same
+  protocol as Grok but has seen less real use.
 
 ## Development
 
 ```bash
 swift build          # debug build
-swift test           # 103 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
+swift test           # 108 tests: key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 ```
 
 ```text
 Sources/
   HerdrVoiceCore/        # testable logic, no audio or UI
-    Provider.swift       # Grok/OpenAI endpoints, session config, voice instructions
+    Provider.swift       # Grok/OpenAI/Gemini endpoints, keys, session config, voice instructions
+    Wire.swift           # provider-neutral commands; each provider's protocol implements it
+    OpenAIRealtimeWire.swift # OpenAI Realtime protocol (also spoken by Grok)
+    GeminiLiveWire.swift # Gemini Live protocol: implicit replies, resumption, goAway
     Events.swift         # server event decoding, spoken "stop" detection
+    ResponseScheduler.swift # one reply at a time; drops repeated tool calls
+    Reconnect.swift      # backoff, session renewal and the conversation recap
+    SpeechGate.swift     # streams only speech, relative to each mic's noise floor
     Herdr.swift          # tool schemas and herdr CLI calls, focus resolution
     Confirm.swift        # the spoken-confirmation gate shared by every risky tool
     ModelMenu.swift      # the orb's AI-model menu entries
     Close.swift          # close/remove tools
     Shell.swift          # opt-in run_shell tool
-    SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
+    SpeechPolicy.swift   # caps reply length by audio, flags code read aloud
     Activity.swift       # when the orb's thinking bubble shows
     WindowPin.swift      # which terminal window the orb pins to, and when it hides
     MicRing.swift        # real-time-safe hand-off of mic samples from the audio thread
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
+    Setup.swift          # `herdr-voice setup`: hidden key entry into the Keychain
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
     Audio.swift          # echo-cancelled mic capture and playback
     Orb.swift            # floating orb
@@ -426,7 +471,9 @@ delta, the process scan (0.4 ms every 2 s), and `herdr` CLI calls (under 10 ms e
 | Symptom | Fix |
 |---|---|
 | `✖ audio: ...` on start | Allow microphone access for your terminal in System Settings → Privacy & Security → Microphone, then restart |
-| `no API key for grok` | Store it in the Keychain: `security add-generic-password -a "$USER" -s XAI_API_KEY -w` (or set `XAI_API_KEY`) |
+| `no API key for grok` | Run `herdr-voice setup grok` in a terminal (or set `XAI_API_KEY`) |
+| `herdr-voice: command not found` | Add `~/.local/bin` to your `PATH` (see [Quick start](#quick-start)), or run `.build/release/herdr-voice` from the clone |
+| A model is greyed out in the orb's menu | It has no key yet: `herdr-voice setup openai` or `herdr-voice setup gemini` in another terminal; the menu picks it up next time you open it |
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
 | `↻ …reconnecting` in the log | Normal: the session ended (idle or time limit) or the network dropped; it reconnects by itself (1 → 30 s backoff) |
 | `✖ …gave up after 8 tries` / red orb | Repeated failures, usually a wrong or revoked key or no network. Fix that, then press `⌥⌘M` |

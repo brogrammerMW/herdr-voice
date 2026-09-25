@@ -9,6 +9,16 @@ let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
     ?? env["HERDR_VOICE_PROVIDER"] ?? "grok"
 
+// herdr-voice setup [grok|openai|gemini]: store an API key, then exit.
+if args.count > 1, args[1] == "setup" {
+    let name = args.count > 2 ? args[2] : providerName
+    guard let provider = Provider(rawValue: name) else {
+        print("unknown provider \(name); use grok, openai or gemini")
+        exit(2)
+    }
+    exit(setupKey(for: provider) ? 0 : 1)
+}
+
 // Whatever was in front when we were launched: normally the terminal running Herdr.
 let launchedFrom = NSWorkspace.shared.frontmostApplication
 let app = NSApplication.shared
@@ -54,10 +64,15 @@ guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use grok, openai or gemini\n".utf8))
     exit(2)
 }
+// No key yet: in a terminal, ask for it right away (first run); otherwise say how to add one.
+if provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
+    print("No \(provider.menuTitle) API key yet.")
+    if !setupKey(for: provider) { exit(2) }
+}
 guard let apiKey = provider.apiKey(environment: env) else {
     FileHandle.standardError.write(Data("""
-    no API key for \(provider.rawValue). Store it in the Keychain (you'll be prompted for it):
-        security add-generic-password -a "$USER" -s \(provider.keyEnv) -w
+    no API key for \(provider.rawValue). Add one with:
+        herdr-voice setup \(provider.rawValue)
     or set \(provider.keyEnv) in the environment.
 
     """.utf8))
