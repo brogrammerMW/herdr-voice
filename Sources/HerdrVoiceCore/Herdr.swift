@@ -20,7 +20,7 @@ public enum HerdrTools {
             "confirmed": confirmedField],
            ["target", "text"]),
         fn("read_agent", "Read the agent's recent terminal output.",
-           ["target": str("Agent name or pane_id"), "lines": ["type": "integer", "description": "Lines to read, default 40"]],
+           ["target": str("Agent name or pane_id"), "lines": ["type": "integer", "description": "Meaningful lines to return, default 20; ask for more only if needed"]],
            ["target"]),
         fn("answer_agent", "Press a key in an agent's approval or question dialog, only after the developer said what to answer. "
            + "Approving keys (enter, y, digits) need the developer's spoken yes: call once, ask, then call again with confirmed=true.",
@@ -117,7 +117,7 @@ public enum HerdrTools {
             if status == "blocked" { return Outcome(output: "\(target) needs approval:\n" + read(target, 30, run), watch: nil) }
             return Outcome(output: out, watch: nil)
         case "read_agent":
-            return Outcome(output: read(target, args["lines"] as? Int ?? 40, run), watch: nil)
+            return Outcome(output: read(target, args["lines"] as? Int ?? reportLines, run), watch: nil)
         case "answer_agent":
             let key = args["key"] as? String ?? ""
             guard allowedKeys.contains(key) else { return Outcome(output: "error: key \(key) not allowed", watch: nil) }
@@ -148,13 +148,37 @@ public enum HerdrTools {
         runAsync(["agent", "wait", target, "--until", "working", "--timeout", "5000"]) { _ in
             runAsync(["agent", "wait", target, "--timeout", "3600000"]) { out in
                 let status = agentStatus(out) ?? "unknown"
-                done("Agent \(target) is now \(status). Recent output:\n" + read(target, 60, run))
+                done("Agent \(target) is now \(status). Recent output:\n" + read(target, reportLines, run))
             }
         }
     }
 
+    /// Lines of agent output handed to the voice model per report. Every line becomes context for the realtime
+    /// model, which slows its replies and fills its session; 20 condensed lines carry the outcome.
+    public static let reportLines = 20
+
+    /// The last `lines` meaningful lines of the agent's terminal. Raw terminal text is mostly padding, borders,
+    /// prompts and spinners, so more is fetched than kept and condensed first.
     public static func read(_ target: String, _ lines: Int, _ run: Runner) -> String {
-        untrusted(run(["agent", "read", target, "--source", "recent", "--lines", String(min(max(lines, 1), 200))]))
+        let keep = min(max(lines, 1), 200)
+        let raw = run(["agent", "read", target, "--source", "recent", "--lines", String(min(keep * 3, 300))])
+        return untrusted(condense(raw, maxLines: keep))
+    }
+
+    /// Strips what carries no meaning for a spoken summary: ANSI escapes, box-drawing, block and braille-spinner
+    /// characters, runs of padding, lines without a letter or digit (borders, bare prompts, blank lines), and
+    /// repeated lines (collapsed to "line (x3)"). Keeps the last `maxLines`.
+    public static func condense(_ text: String, maxLines: Int) -> String {
+        var out: [(line: String, count: Int)] = []
+        for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            var line = String(raw).replacingOccurrences(of: #"\x1B\[[0-9;?]*[ -/]*[@-~]"#, with: "", options: .regularExpression)
+            line = String(line.unicodeScalars.map { (0x2500...0x259F).contains($0.value) || (0x2800...0x28FF).contains($0.value) ? " " : Character($0) })
+            line = line.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            guard line.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
+            if out.last?.line == line { out[out.count - 1].count += 1 } else { out.append((line, 1)) }
+        }
+        return out.suffix(maxLines).map { $0.count > 1 ? "\($0.line) (x\($0.count))" : $0.line }.joined(separator: "\n")
     }
 
     /// Terminal output can contain text from web pages, repos or tools the agent touched. Fence it so the

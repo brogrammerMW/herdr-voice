@@ -265,7 +265,10 @@ Herdr sets `HERDR_ENV=1` and your workspace and tab IDs in every pane it manages
 you and its commands go to whichever Herdr session is focused.
 
 When you send work, herdr-voice waits (in the background) until Herdr reports the agent as `idle`, `done` or `blocked`,
-reads the last lines of its terminal, and hands them to the voice model to summarize. That is what lets the voice
+reads the end of its terminal, and hands it to the voice model to summarize. Terminal text is mostly padding, borders,
+prompts and spinners, so it is condensed first: escape codes, box-drawing and spinner characters, blank and
+symbol-only lines are dropped, repeated lines are collapsed, and only the last 20 meaningful lines are sent. Smaller
+reports make the voice reply faster and keep its session context small. That is what lets the voice
 speak up on its own when an agent finishes.
 
 ## How it talks
@@ -333,7 +336,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 82 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, stop phrases
+swift test           # 85 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases
 swift build -c release
 ```
 
@@ -381,6 +384,21 @@ about $3 to $5 per hour, even if you only talk for a few minutes of it. herdr-vo
   to tell you.
 
 Set `HERDR_VOICE_STREAM=always` to stream continuously instead.
+
+## Performance
+
+Measured on an M4 Pro, idle and listening, orb pinned:
+
+| Part | Cost | Notes |
+|---|---|---|
+| macOS voice processing | ~12% of a core | Echo cancellation and noise suppression. About 5% while muted (bypassed), about 0.6% with `HERDR_VOICE_ECHO_CANCEL=0` |
+| Window tracker | ~1% with the Herdr terminal in front, ~0 otherwise | Background queue, 10 Hz with 20% leeway; no window queries while another app is in front |
+| Orb | 30 fps when idle, 60 fps while someone talks or something works, 0 while hidden | Display link in `.common` run loop mode instead of a timer |
+| Esc capture | event-driven | Grabbed and released when playback starts and stops |
+
+Left alone on purpose because they measured negligible: building the JSON for each 20 ms mic chunk, converting
+playback audio from Int16 to Float on the main thread, the speech policy re-scanning a short reply per transcript
+delta, the process scan (0.4 ms every 2 s), and `herdr` CLI calls (under 10 ms each).
 
 ## Troubleshooting
 

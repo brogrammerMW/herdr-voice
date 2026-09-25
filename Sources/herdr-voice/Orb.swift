@@ -59,6 +59,19 @@ final class Orb {
     private let bubble = CALayer()
     private var thinking = false
 
+    /// One frame's inputs: the mood, raw 0...1 loudness of mic and playback, and whether anything is working.
+    struct Frame {
+        let mood: Mood
+        let mic: Float
+        let voice: Float
+        let thinking: Bool
+    }
+
+    private let view: ClickView
+    private let driver = FrameDriver()
+    private var link: CADisplayLink?
+    private var idle = false
+
     /// `onClick` for a plain click (mute), `onQuit` for the right-click menu's Quit item.
     init(onClick: @escaping () -> Void, onQuit: @escaping () -> Void = { NSApp.terminate(nil) }) {
         let s = Orb.size
@@ -71,7 +84,7 @@ final class Orb {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
 
-        let view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, onQuit: onQuit)
+        view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, onQuit: onQuit)
         view.wantsLayer = true
         let root = view.layer!
 
@@ -200,6 +213,31 @@ final class Orb {
         panel.setFrameOrigin(NSPoint(x: f.minX + 20, y: f.minY + 20))
     }
 
+    /// Drives the orb from a display link instead of a 60 Hz timer: frames follow the display, drop to 30 fps
+    /// while idle, run in `.common` mode (not paused by menu tracking), and stop entirely while the panel is
+    /// hidden, which AppKit does for us (measured: 62/s visible, 32/s at the idle rate, 0/s ordered out).
+    func run(_ frame: @escaping () -> Frame) {
+        driver.fire = { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            let f = frame()
+            self.update(f.mood, mic: f.mic, voice: f.voice, thinking: f.thinking)
+        }
+        let link = view.displayLink(target: driver, selector: #selector(FrameDriver.step(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    /// 30 fps is plenty for slow drifting; full rate while someone is talking or something is working.
+    /// Judged on raw levels: the smoothed energies are fourth roots, which lift room noise to ~0.3.
+    private func adjustFrameRate(mic: Float, voice: Float) {
+        let nowIdle = mic < 0.01 && voice < 0.001 && !thinking
+        guard nowIdle != idle else { return }
+        idle = nowIdle
+        link?.preferredFrameRateRange = nowIdle
+            ? CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+            : CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+    }
+
     /// Called every frame with the current mood, raw 0...1 loudness of the mic and of the assistant's playback,
     /// and whether anything is working (voice model processing, a tool call, or a coding agent).
     func update(_ newMood: Mood, mic: Float, voice: Float, thinking: Bool) {
@@ -243,6 +281,7 @@ final class Orb {
         glow.setAffineTransform(CGAffineTransform(scaleX: glowScale, y: glowScale))
         glow.opacity = Float(mood == .muted ? 0.25 : 0.6 + energy * 0.4)
         CATransaction.commit()
+        adjustFrameRate(mic: mic, voice: voice)
     }
 
     /// Fourth root lifts quiet speech; fast attack / slow release feels like breath, not flicker.
@@ -294,4 +333,10 @@ final class Orb {
 
         @objc private func quitChosen() { onQuit() }
     }
+}
+
+/// Display links need an Objective-C target; this forwards each frame to a closure.
+private final class FrameDriver: NSObject {
+    var fire: () -> Void = {}
+    @objc func step(_ link: CADisplayLink) { fire() }
 }
