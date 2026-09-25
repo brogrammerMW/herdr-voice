@@ -14,7 +14,13 @@ final class Realtime {
     private var socket: URLSessionWebSocketTask?
 
     private(set) var status = Status.disconnected { didSet { syncSendGate() } }
-    private(set) var muted = false { didSet { syncSendGate() } }
+    private(set) var muted = false {
+        didSet {
+            syncSendGate()
+            let m = muted
+            micShared.withLock { $0.muted = m }
+        }
+    }
     /// Whether mic audio may leave the Mac. Read on the audio thread, so it lives behind a lock rather than
     /// being derived from `muted`/`status` there (a stale read could send audio just after muting).
     private let mayStream = OSAllocatedUnfairLock(initialState: false)
@@ -62,22 +68,116 @@ final class Realtime {
     private var keepalive: DispatchSourceTimer?
     private var pongPending = false
 
+    // Speech-gated streaming. Providers bill per minute of audio, and an always-open mic streams every unmuted
+    // minute. Only speech is sent (SpeechGate), and a quiet session is closed and reopened when you next speak.
+    // HERDR_VOICE_STREAM=always restores continuous streaming.
+    private let gated = ProcessInfo.processInfo.environment["HERDR_VOICE_STREAM"] != "always"
+    /// A session with no speech for this long, and nothing speaking or running, is closed until you speak.
+    static let quietClose: TimeInterval = 180
+    /// Mic-queue only.
+    private var gate = SpeechGate<String>()
+    /// Shared between the mic queue and main.
+    private struct MicShared {
+        var muted = false
+        /// The provider has heard speech start and not yet end: keep streaming so it sees the turn finish.
+        var midTurn = false
+        var lastSpeech = Date()
+        /// Speech captured while the session was closed or reopening, sent once it's up (at most 10 s).
+        var held: [String] = []
+    }
+    private let micShared = OSAllocatedUnfairLock(initialState: MicShared())
+    /// Closed on purpose because nobody was talking; any speech (or an agent report) reopens it.
+    private(set) var dormant = false
+    private var quietTimer: DispatchSourceTimer?
+
     init(provider: Provider, key: String, voice: String) {
         self.provider = provider
         self.key = key
         self.voice = voice
-        audio.onMic = { [weak self] b64 in
-            guard let self, self.mayStream.withLock({ $0 }) else { return }
-            self.sendRaw(["type": "input_audio_buffer.append", "audio": b64])
-        }
+        audio.onMic = { [weak self] b64, level in self?.micChunk(b64, level: level) }
     }
 
     func start() throws {
         try audio.start()
         connect()
+        if gated { startQuietTimer() }
+    }
+
+    /// On the mic queue, every 20 ms.
+    private func micChunk(_ b64: String, level: Float) {
+        let (muted, midTurn) = micShared.withLock { ($0.muted, $0.midTurn) }
+        if muted {
+            gate.reset()
+            return
+        }
+        let chunks = gated ? gate.process(b64, level: level, holdOpen: midTurn) : [b64]
+        guard !chunks.isEmpty else { return }
+        if mayStream.withLock({ $0 }) {
+            if gated { micShared.withLock { $0.lastSpeech = Date() } }
+            chunks.forEach { sendRaw(["type": "input_audio_buffer.append", "audio": $0]) }
+            return
+        }
+        // No session right now (closed while quiet, or reopening): keep the speech and bring the session back.
+        micShared.withLock {
+            $0.held.append(contentsOf: chunks)
+            if $0.held.count > 500 { $0.held.removeFirst($0.held.count - 500) }
+            $0.lastSpeech = Date()
+        }
+        DispatchQueue.main.async { self.wake() }
+    }
+
+    /// Speech while there's no session: reopen it (unless one is already on its way).
+    private func wake() {
+        guard status == .disconnected, !muted else { return }
+        if dormant {
+            dormant = false
+            log("🎙  heard you; reopening the session")
+        }
+        attempts = 0
+        connect()
+    }
+
+    private func flushHeldAudio() {
+        let held = micShared.withLock { s -> [String] in
+            defer { s.held.removeAll() }
+            return s.held
+        }
+        held.forEach { sendRaw(["type": "input_audio_buffer.append", "audio": $0]) }
+    }
+
+    /// Every 5 s: close a session nobody has talked to for `quietClose`, if nothing is speaking or running.
+    private func startQuietTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.status == .live, self.established else { return }
+            let quietFor = Date().timeIntervalSince(self.micShared.withLock { $0.lastSpeech })
+            guard quietFor > Self.quietClose, !self.responseActive, !self.audio.isSpeaking,
+                  self.toolsRunning == 0, self.outbox.isEmpty else { return }
+            self.goDormant("no speech for \(Int(Self.quietClose / 60)) min")
+        }
+        timer.resume()
+        quietTimer = timer
+    }
+
+    private func goDormant(_ why: String) {
+        dormant = true
+        if let s = socket {
+            socket = nil
+            s.cancel(with: .normalClosure, reason: nil)
+        }
+        keepalive?.cancel()
+        keepalive = nil
+        status = .disconnected
+        responseActive = false
+        awaitingReplySince = nil
+        micShared.withLock { $0.midTurn = false }
+        log("💤 \(why); session closed until you speak")
     }
 
     func connect() {
+        dormant = false
+        micShared.withLock { $0.midTurn = false }
         connection += 1
         established = false
         closeReason = nil
@@ -100,7 +200,10 @@ final class Realtime {
 
     /// The first server event on a socket: the session is really up.
     private func sessionEstablished() {
+        // Speech held while the session reopened goes first, before live audio starts flowing.
+        flushHeldAudio()
         established = true
+        flushHeldAudio() // anything that slipped in meanwhile
         attempts = 0
         if hadSession, let context = recap.message {
             sendRaw(["type": "conversation.item.create", "item": [
@@ -124,6 +227,12 @@ final class Realtime {
         responseActive = false
         awaitingReplySince = nil
         if !established { attempts += 1 }
+        // The provider closed a quiet session: nothing to reconnect for until someone speaks.
+        if gated && reason == .sessionEnded && !muted {
+            dormant = true
+            log("💤 \(detail); reopens when you speak")
+            return
+        }
         guard let delay = Reconnect.delay(reason: reason, attempt: attempts, muted: muted) else {
             log(muted ? "… \(detail); reconnects when you unmute"
                       : "✖ \(detail); gave up after \(attempts) tries, press \(Hotkey.label) to reconnect")
@@ -190,6 +299,12 @@ final class Realtime {
                 log("🎙  listening")
             }
             attempts = 0
+            if gated {
+                // No need to pay for a session before you say something.
+                dormant = true
+                log("🎙  listening; the session opens when you speak")
+                return
+            }
             return connect()
         }
         muted.toggle()
@@ -265,6 +380,7 @@ final class Realtime {
             if !droppingAudio { audio.play(base64: b64, item: item) }
         case .responseCreated:
             responseActive = true
+            micShared.withLock { $0.midTurn = false }
             awaitingReplySince = nil
             droppingAudio = false
             // A run_shell approval question reads the command aloud on purpose.
@@ -283,8 +399,10 @@ final class Realtime {
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
         case .speechStopped:
             if !muted { awaitingReplySince = Date() }
+            micShared.withLock { $0.midTurn = false }
         case .speechStarted:
             lastSpeechStart = Date()
+            micShared.withLock { $0.midTurn = true }
             awaitingReplySince = nil
             // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest.
             cutPlayback()
