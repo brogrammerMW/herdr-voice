@@ -16,7 +16,8 @@ public final class ConfirmGate {
         var answered = false
     }
 
-    private let lock = NSLock()
+    /// Guards `pending`; `consume` waits on it for the spoken answer and `heard` signals it.
+    private let lock = NSCondition()
     private var pending: Pending?
     private let ttl: TimeInterval
     private let minDelay: TimeInterval
@@ -65,25 +66,24 @@ public final class ConfirmGate {
                 || text.contains("go ahead")
             p.confirmed = yes && !no
             pending = p.confirmed ? p : nil
+            lock.broadcast() // wake a confirmed call already waiting in `consume`
         }
     }
 
-    /// True once if `action` was confirmed. Waits briefly because the "yes" transcript can arrive
-    /// after the model has already issued the confirmed call.
+    /// True once if `action` was confirmed. Waits up to `wait` seconds because the "yes" transcript can arrive
+    /// after the model has already issued the confirmed call; `heard` wakes it the moment the answer lands.
     func consume(_ action: String) -> Bool {
-        let deadline = clock().addingTimeInterval(wait)
-        repeat {
-            let state: Bool? = lock.withLock {
-                guard let p = pending, clock().timeIntervalSince(p.at) < ttl else { return false }
-                // A confirmed call for anything else voids the "yes": it was given for a different question.
-                guard p.action == action else { pending = nil; return false }
-                if p.confirmed { pending = nil; return true }
-                return nil
-            }
-            if let state { return state }
-            Thread.sleep(forTimeInterval: 0.1)
-        } while clock() < deadline
-        return false
+        let deadline = Date().addingTimeInterval(wait) // real time: the injected clock only models ages
+        lock.lock()
+        defer { lock.unlock() }
+        while true {
+            guard let p = pending, clock().timeIntervalSince(p.at) < ttl else { return false }
+            // A confirmed call for anything else voids the "yes": it was given for a different question.
+            guard p.action == action else { pending = nil; return false }
+            if p.confirmed { pending = nil; return true }
+            // Still unanswered: sleep until `heard` broadcasts or the deadline passes.
+            if !lock.wait(until: deadline) { return false }
+        }
     }
 }
 

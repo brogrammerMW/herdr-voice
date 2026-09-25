@@ -9,8 +9,17 @@ let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
     ?? env["HERDR_VOICE_PROVIDER"] ?? "grok"
 
+// Whatever was in front when we were launched: normally the terminal running Herdr.
+let launchedFrom = NSWorkspace.shared.frontmostApplication
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+// An accessory app can still be activated at launch; it then holds focus with no window to type into, so
+// keystrokes stop reaching the terminal (and the pinned orb hides). Hand focus straight back.
+DispatchQueue.main.async {
+    guard NSApp.isActive, let previous = launchedFrom, previous.processIdentifier != getpid() else { return }
+    NSApp.yieldActivation(to: previous)
+    previous.activate()
+}
 
 // --orb-demo: orb only, driven by the live mic, cycling moods every 4s. No network, no key.
 if args.contains("--orb-demo") {
@@ -43,24 +52,35 @@ guard let provider = Provider(rawValue: providerName) else {
     FileHandle.standardError.write(Data("unknown provider \(providerName); use openai or grok\n".utf8))
     exit(2)
 }
-guard let key = env[provider.keyEnv], !key.isEmpty else {
-    FileHandle.standardError.write(Data("set \(provider.keyEnv) to use \(provider.rawValue)\n".utf8))
+guard let apiKey = provider.apiKey(environment: env) else {
+    FileHandle.standardError.write(Data("""
+    no API key for \(provider.rawValue). Store it in the Keychain (you'll be prompted for it):
+        security add-generic-password -a "$USER" -s \(provider.keyEnv) -w
+    or set \(provider.keyEnv) in the environment.
+
+    """.utf8))
     exit(2)
 }
+let key = apiKey.value
+log("🔑 \(provider.keyEnv) from the \(apiKey.source.rawValue)") // where it came from, never the value
 if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }
 
+if env["HERDR_VOICE_ECHO_CANCEL"] == "0" { log("echo cancellation off (HERDR_VOICE_ECHO_CANCEL=0): use headphones") }
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let session = Realtime(provider: provider, key: key, voice: env["HERDR_VOICE_VOICE"] ?? provider.defaultVoice)
-let orb = Orb { session.toggleMute() }
+let orb = Orb(onClick: { session.toggleMute() }, onQuit: {
+    session.shutdown()
+    // A moment for the WebSocket close frame to go out.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+})
 Hotkey.registerMute { session.toggleMute() }
 
 // Pin the orb to the terminal window showing Herdr; HERDR_VOICE_ORB_PIN=0 keeps it in the screen corner.
+let windowTracker = WindowTracker()
 if env["HERDR_VOICE_ORB_PIN"] != "0" {
-    let tracker = WindowTracker()
-    Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-        let (hasHost, frame) = tracker.locate()
+    windowTracker.start { hasHost, frame in
         if hasHost { orb.follow(frame) } else { orb.showInScreenCorner() }
     }
 }
@@ -69,7 +89,8 @@ Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
     let a = session.audio
     Hotkey.setStopKey(active: a.isSpeaking) { session.stopSpeech(reason: "Esc") }
     let mood: Orb.Mood
-    if session.status == .disconnected { mood = .offline }
+    // Offline while muted is deliberate (it reconnects when you unmute), so show muted, not an error.
+    if session.status == .disconnected && !session.muted && !session.dormant { mood = .offline }
     else if a.isSpeaking { mood = .speaking }
     else if session.muted { mood = .muted }
     else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }

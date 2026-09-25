@@ -75,13 +75,14 @@ Start it **inside a Herdr pane**, so its commands target your session. A small p
 
 ```bash
 herdr pane split --current --direction down --no-focus    # optional: make a pane for it
-export XAI_API_KEY=xai-...                                  # or OPENAI_API_KEY
+security add-generic-password -a "$USER" -s XAI_API_KEY -w # once: stores your key in the Keychain (prompts for it)
 herdr-voice                                                 # or .build/release/herdr-voice
 ```
 
 On first run macOS asks for microphone access for your terminal app; allow it. You should see:
 
 ```text
+🔑 XAI_API_KEY from the Keychain
 ● connecting to grok — speak any time, ⌥⌘M mutes, Esc stops speech
 ```
 
@@ -123,6 +124,7 @@ thing, the voice asks which one you mean instead of guessing.
 | Control | Action |
 |---|---|
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
+| Right-click (or control-click) the orb | Menu with **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
 | Talk over the voice | Stop it and listen to you |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |
@@ -130,7 +132,8 @@ thing, the voice asks which one you mean instead of guessing.
 `Esc` is only captured while the assistant is actually speaking, so every other app keeps its `Esc` the rest of the
 time. A longer sentence that happens to contain "stop" ("stop the dev server") is treated as a request, not an
 interrupt. While muted, no mic audio is sent, but you still hear the voice, so muting is a good way to listen to a
-summary without being interrupted.
+summary without being interrupted. Muting also bypasses the echo canceller, which more than halves herdr-voice's CPU
+use while muted.
 
 ### Where the orb shows
 
@@ -169,13 +172,17 @@ Everything is set with environment variables (and one flag):
 | Variable | Default | Purpose |
 |---|---|---|
 | `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `grok` or `openai` |
-| `XAI_API_KEY` | | Required for Grok |
-| `OPENAI_API_KEY` | | Required for OpenAI |
+| `XAI_API_KEY` | | Grok key, if it isn't in the Keychain (see [API keys](#api-keys)) |
+| `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
 | `HERDR_VOICE_VOICE` | `eve` (Grok), `marin` (OpenAI) | Voice ID, passed straight to the provider |
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
+| `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
+| `HERDR_VOICE_GATE_DEBUG` | off | `1` logs the speech gate: its noise floor, opening level and peaks every 5 s, and each open/close |
+| `HERDR_VOICE_GATE_THRESHOLD` | adaptive | Pins the opening level (rms, e.g. `0.01`) for unusual hardware; normally not needed |
+| `HERDR_VOICE_ECHO_CANCEL` | on | `0` turns off macOS voice processing (echo cancellation and noise suppression). Use it with headphones: it cuts herdr-voice's CPU use by about 11 points |
 
 ### Shell commands (`run_shell`, opt-in)
 
@@ -191,6 +198,24 @@ commands itself, which is handy for quick checks where prompting an agent is ove
   marked as untrusted.
 - It is your shell with your permissions: a command you approve can do anything you could. Prefer asking an agent
   for real work; agents have their own review and permission steps.
+
+### API keys
+
+herdr-voice looks for the key in the **macOS Keychain first**, then in the environment variable. Keeping it in the
+Keychain means it survives logout and restart, works in every new Herdr pane without any shell setup, and never lands
+in your shell history (which is where `export XAI_API_KEY=...` typed at a prompt ends up).
+
+```bash
+security add-generic-password -a "$USER" -s XAI_API_KEY -w       # Grok; you'll be prompted for the key
+security add-generic-password -a "$USER" -s OPENAI_API_KEY -w    # OpenAI, if you use it
+security add-generic-password -U -a "$USER" -s XAI_API_KEY -w    # replace a key after rotating it
+security delete-generic-password -s XAI_API_KEY                  # remove it
+```
+
+The service name is the variable name. herdr-voice reads it through the same `security` tool, so there is no access
+prompt, not even after rebuilding. The key travels over a private pipe, and startup only logs where it came from
+(`🔑 XAI_API_KEY from the Keychain`), never the value. If you did export a key at a prompt before, remove it from
+`~/.zsh_history` and rotate it.
 
 ### Voices
 
@@ -259,7 +284,10 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ## Privacy and safety
 
-- **What leaves your Mac.** While unmuted, mic audio streams to the provider you chose (xAI or OpenAI). When you ask
+- **What leaves your Mac.** Only while you're talking: mic audio is checked on your Mac and only speech is streamed
+  to the provider you chose (xAI or OpenAI), in 20 ms chunks, starting 300 ms before you start and ending 0.8 s
+  after you stop. Silence never leaves the Mac, and after 3 quiet minutes the session is closed entirely until you
+  speak again. When you ask
   what an agent is doing, or when an agent finishes, the last lines of that agent's terminal are sent to the provider
   too. Don't use it near terminals showing secrets you wouldn't paste into a chat.
 - **Muting** stops audio from being sent, and clears whatever the provider had buffered.
@@ -279,7 +307,8 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   [Shell commands](#shell-commands-run_shell-opt-in)). Its output is sent to the provider for the summary.
 - **The agents keep their own guardrails.** herdr-voice types into Claude Code or Codex; their permission prompts still
   apply.
-- **API keys** are read from the environment and only sent as the `Authorization` header to the provider.
+- **API keys** are read from the Keychain (or the environment), never logged, and only sent as the `Authorization`
+  header to the provider.
 
 ## Limitations
 
@@ -293,8 +322,9 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
   either side of the sentence boundary. It relies on the provider streaming transcript deltas
   (`response.output_audio_transcript.delta`); without them only the instructions apply.
 - `run_shell` stops the shell when it times out, but anything it started in the background keeps running.
-- No automatic reconnect. If the connection drops the orb turns red; press `⌥⌘M` to reconnect. Providers cap session
-  length (OpenAI: 60 minutes).
+- Providers end sessions on their own (xAI after 15 minutes idle, OpenAI at 60 minutes). herdr-voice renews them
+  automatically and replays a short recap of the conversation into the new session, but the model's memory beyond
+  that recap starts fresh. While muted it waits and reconnects when you unmute, so no idle session is billed.
 - If an agent finishes while the voice is still talking, its summary can be refused by the provider ("active
   response"); ask "what did it do?" to hear it.
 - Developed and used live with Grok. The OpenAI path uses the same protocol but has seen less real use.
@@ -303,7 +333,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 47 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, stop phrases
+swift test           # 82 tests: events, Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, stop phrases
 swift build -c release
 ```
 
@@ -319,23 +349,48 @@ Sources/
     SpeechPolicy.swift   # enforces two-sentence, no-code-aloud replies from the live transcript
     Activity.swift       # when the orb's thinking bubble shows
     WindowPin.swift      # which terminal window the orb pins to, and when it hides
+    MicRing.swift        # real-time-safe hand-off of mic samples from the audio thread
   herdr-voice/           # the app
     main.swift           # config, wiring, --orb-demo
     Realtime.swift       # WebSocket session, tool dispatch, interrupts
     Audio.swift          # echo-cancelled mic capture and playback
     Orb.swift            # floating orb
-    WindowTracker.swift  # finds the Herdr window (process tree, window list) ten times a second
+    WindowTracker.swift  # finds the Herdr window on a background queue; queries windows only while the terminal is in front
     Hotkey.swift         # global hotkeys (⌥⌘M, Esc while speaking)
 Tests/HerdrVoiceTests/
 ```
+
+## Cost
+
+Providers bill per minute of audio (Grok about $0.05 to $0.08). An always-open mic would bill every unmuted minute,
+about $3 to $5 per hour, even if you only talk for a few minutes of it. herdr-voice instead:
+
+- **streams only speech.** A cheap check on your Mac opens the stream when you start talking (keeping the 300 ms
+  before, so the first word isn't clipped) and closes it 0.8 s after you stop, or once the provider has seen your
+  turn end. Measured on a real mic: 10 to 23% of a 12 s window streamed during conversation, 0% in silence.
+- **works with any microphone.** Speech is judged relative to *your* mic's own noise, never a fixed level: the
+  noise floor is re-estimated continuously from the last 3 seconds (the gaps between words keep it honest while you
+  talk), the stream opens about 14 dB above it and stays open about 8 dB above it, and isolated clicks are ignored.
+  So a quiet laptop mic, a close headset, a hissy USB condenser or a mic next to a fan all work, and switching
+  devices settles within a few seconds. The tests run a simulated matrix of these mics across 200 noise seeds each.
+  If it ever misses you, `HERDR_VOICE_GATE_DEBUG=1` shows what it hears, and `HERDR_VOICE_STREAM=always` is the
+  fallback.
+- **closes quiet sessions.** After 3 minutes with no speech, and nothing speaking or running, the session is
+  closed (`💤` in the log, the orb stays blue). The next thing you say reopens it; what you say while it reconnects
+  is held and sent once it's up, and a short recap restores the conversation. An agent finishing also reopens it
+  to tell you.
+
+Set `HERDR_VOICE_STREAM=always` to stream continuously instead.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `✖ audio: ...` on start | Allow microphone access for your terminal in System Settings → Privacy & Security → Microphone, then restart |
-| `set XAI_API_KEY to use grok` | Export the key in the shell that runs herdr-voice |
+| `no API key for grok` | Store it in the Keychain: `security add-generic-password -a "$USER" -s XAI_API_KEY -w` (or set `XAI_API_KEY`) |
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
-| `✖ disconnected` / red orb | Network or auth problem. Check the key, then press `⌥⌘M` to reconnect |
+| `↻ …reconnecting` in the log | Normal: the session ended (idle or time limit) or the network dropped; it reconnects by itself (1 → 30 s backoff) |
+| `✖ …gave up after 8 tries` / red orb | Repeated failures, usually a wrong or revoked key or no network. Fix that, then press `⌥⌘M` |
 | `⚠ not inside a Herdr pane` | Start it from a Herdr pane so it controls the right session |
-| The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud |
+| The voice hears itself | Echo cancellation needs the default input/output devices; use headphones if your speakers are very loud (and make sure `HERDR_VOICE_ECHO_CANCEL` isn't `0`) |
+| herdr-voice uses more CPU than you'd like | Most of it is macOS voice processing (about 12% of a core). With headphones, set `HERDR_VOICE_ECHO_CANCEL=0` (about 1% instead); otherwise mute when you aren't talking (about 5%) |

@@ -36,6 +36,16 @@ public enum WindowPin {
         return nil
     }
 
+    /// Combines this tick's on-screen windows (front to back) with a periodically refreshed list of all windows.
+    /// Cached windows that aren't on screen now are appended as off-screen, which is all `target` needs from them:
+    /// knowing a Herdr window exists in an unselected tab. Querying every window costs ~10x an on-screen query.
+    public static func merge(onScreen: [Window], cached: [Window]) -> [Window] {
+        let shown = Set(onScreen.map(\.number))
+        return onScreen + cached.filter { !shown.contains($0.number) }.map {
+            Window(number: $0.number, pid: $0.pid, layer: $0.layer, name: $0.name, frame: $0.frame, isOnScreen: false)
+        }
+    }
+
     /// The window to pin to, or nil to hide the orb. `windows` is all windows, on-screen ones front to back.
     /// Shows only while a host app is frontmost and its front window is the Herdr one: another app in front,
     /// another window of the terminal in front, or a different terminal tab selected all hide the orb.
