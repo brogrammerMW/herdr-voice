@@ -17,6 +17,22 @@ public enum Provider: String, CaseIterable {
         }
     }
 
+    public enum KeySource: String {
+        case keychain = "Keychain"
+        case environment = "environment"
+    }
+
+    /// The API key: the macOS Keychain first (a generic password whose service is `keyEnv`, e.g. XAI_API_KEY), then
+    /// the environment variable. The value is never logged or printed; callers report only where it came from.
+    public func apiKey(environment: [String: String],
+                       keychain: (String) -> String? = { Keychain.password(service: $0) }) -> (value: String, source: KeySource)? {
+        if let value = keychain(keyEnv), !value.isEmpty { return (value, .keychain) }
+        if let value = environment[keyEnv]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+            return (value, .environment)
+        }
+        return nil
+    }
+
     public var defaultVoice: String {
         switch self {
         case .openai: "marin"
@@ -56,6 +72,30 @@ public enum Provider: String, CaseIterable {
                 "tools": tools,
             ] as [String: Any]]
         }
+    }
+}
+
+/// Reads generic passwords from the login Keychain.
+///
+/// Goes through /usr/bin/security rather than SecItem: an item added with `security add-generic-password` trusts
+/// that tool, so reading it this way never prompts. SecItem from this unsigned binary would prompt again after
+/// every rebuild, since each build has a different code signature. The secret only travels over a private pipe:
+/// the command line carries just the service name, and stderr ("item not found") is discarded.
+public enum Keychain {
+    public static func password(service: String) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["find-generic-password", "-s", service, "-w"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        let value = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
+        return value.isEmpty ? nil : value
     }
 }
 
