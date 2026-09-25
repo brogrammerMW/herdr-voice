@@ -28,7 +28,14 @@ if args.count > 1, args[1] == "tool" {
         }
         exit(0)
     }
-    print(HerdrTools.call(args[2], arguments: args.count > 3 ? args[3] : "{}").output)
+    let outcome = HerdrTools.call(args[2], arguments: args.count > 3 ? args[3] : "{}")
+    print(outcome.output)
+    // watch_pane: wait here for what the voice would hear later.
+    if let watch = outcome.paneWatch {
+        let finished = DispatchSemaphore(value: 0)
+        HerdrTools.watchPane(watch) { print($0); finished.signal() }
+        finished.wait()
+    }
     exit(0)
 }
 

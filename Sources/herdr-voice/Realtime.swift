@@ -40,6 +40,9 @@ final class Realtime {
     private var lastReport = Date.distantPast
     /// Agents currently being watched in the background.
     private(set) var busyAgents = Set<String>()
+    /// Pane watches running in the background. Unlike busy agents they don't count as work: a watch can wait an
+    /// hour for a dev server, and the orb shouldn't churn or the session stay open all that time.
+    private var watchedPanes = Set<String>()
     /// A response is being generated; `response.cancel` is only valid while this is true.
     /// One response at a time: every reply request goes through here (see ResponseScheduler).
     private var replies = ResponseScheduler()
@@ -652,6 +655,7 @@ final class Realtime {
             DispatchQueue.main.async {
                 self.toolsRunning -= 1
                 if let target = outcome.watch { self.watch(target) }
+                if let pane = outcome.paneWatch { self.watchPane(pane) }
                 // A result for a call from a session that has since closed has nowhere to go.
                 guard self.connection == id, self.status == .live else { return }
                 self.addToolOutput(ToolOutput(callID: callID, name: name, output: outcome.output))
@@ -667,6 +671,20 @@ final class Realtime {
             DispatchQueue.main.async {
                 self.busyAgents.remove(target)
                 log("← \(target) settled")
+                self.lastReport = Date()
+                self.deliver("[herdr] " + report)
+            }
+        }
+    }
+
+    private func watchPane(_ w: HerdrTools.PaneWatch) {
+        let key = w.pane + "\u{0}" + w.regex
+        guard watchedPanes.insert(key).inserted else { return }
+        log("👁  watching \(w.label) for \(w.awaited)")
+        HerdrTools.watchPane(w) { report in
+            DispatchQueue.main.async {
+                self.watchedPanes.remove(key)
+                log("← \(w.label) watch ended")
                 self.lastReport = Date()
                 self.deliver("[herdr] " + report)
             }

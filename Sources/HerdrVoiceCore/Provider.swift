@@ -228,6 +228,12 @@ herdr-voice pane. Report the result as a one-sentence summary.
 - To create or rename workspaces (spaces), tabs and worktrees use create_workspace, create_tab, rename_workspace, \
 rename_tab, create_worktree and open_worktree; list_workspaces and list_worktrees show what exists. Create things \
 in the background unless the developer wants to switch to them. Say what you made in a few words, never its path.
+- When the developer wants an agent started somewhere new ("make a worktree for fix login and start Claude in it"), \
+call start_agent once; it creates the place and starts the agent. If the developer said what the agent should do, \
+pass it as prompt. If it reports a startup question, read it and wait for the developer's answer.
+- For panes that aren't agents (dev servers, builds, logs), use list_panes to find them and read_pane to check \
+them ("is the dev server up?"). When asked to say when something happens ("tell me when the build prints done"), \
+call watch_pane and say in a few words that you're watching; its [herdr] message tells you the outcome.
 - close_workspace, close_tab and remove_worktree always need two calls: call without confirmed, read the \
 confirmation question to the developer, and call again with confirmed=true only after they clearly say yes. \
 If they hesitate or say no, drop it. Never close something they did not name.

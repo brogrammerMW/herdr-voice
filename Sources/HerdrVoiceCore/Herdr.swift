@@ -10,7 +10,7 @@ public enum HerdrTools {
         ["type": "boolean", "description": "true only on the second call, after the developer said yes"]
 
     /// Tools offered to the voice model. `run_shell` is only offered when HERDR_VOICE_SHELL=1.
-    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + (shellEnabled ? [shellSchema] : []) }
+    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + [startAgentSchema] + paneSchemas + (shellEnabled ? [shellSchema] : []) }
 
     static let herdrSchemas: [[String: Any]] = [
         fn("list_agents", "List coding agents running in Herdr panes with name, status, cwd and title.", [:], []),
@@ -91,6 +91,8 @@ public enum HerdrTools {
         public let output: String
         /// Agent to watch in the background until it settles.
         public let watch: String?
+        /// Pane output to wait for in the background.
+        public var paneWatch: PaneWatch? = nil
     }
 
     /// `userInitiated` is false when the model is acting on an agent report rather than on the developer's voice;
@@ -109,13 +111,7 @@ public enum HerdrTools {
                                                      question: "send \(target) this instruction: \(text)", confirmed: confirmed, gate) {
                 return Outcome(output: stop, watch: nil)
             }
-            // Wait only until the agent reacts, so the conversation isn't blocked on the whole turn.
-            let out = run(["agent", "prompt", target, text, "--wait",
-                           "--until", "working", "--until", "blocked", "--timeout", "10000"])
-            let status = agentStatus(out)
-            if status == "working" { return Outcome(output: "sent; \(target) is working", watch: target) }
-            if status == "blocked" { return Outcome(output: "\(target) needs approval:\n" + read(target, 30, run), watch: nil) }
-            return Outcome(output: out, watch: nil)
+            return sendPrompt(target, text, run)
         case "read_agent":
             return Outcome(output: read(target, args["lines"] as? Int ?? reportLines, run), watch: nil)
         case "answer_agent":
@@ -132,6 +128,10 @@ public enum HerdrTools {
             guard shellEnabled else { return Outcome(output: "error: run_shell is disabled (set HERDR_VOICE_SHELL=1)", watch: nil) }
             return Outcome(output: runShell(args["command"] as? String ?? "", cwd: args["cwd"] as? String,
                                             confirmed: confirmed, gate), watch: nil)
+        case "start_agent":
+            return startAgent(args, run, gate, userInitiated: userInitiated)
+        case _ where paneTools.contains(name):
+            return panes(name, args, run)
         case _ where manageTools.contains(name):
             return Outcome(output: manage(name, args, run, gate, userInitiated: userInitiated), watch: nil)
         case "close_workspace", "close_tab", "remove_worktree":
@@ -139,6 +139,16 @@ public enum HerdrTools {
         default:
             return Outcome(output: "error: unknown tool \(name)", watch: nil)
         }
+    }
+
+    /// Sends an instruction and waits only until the agent reacts, so the conversation isn't blocked on the whole turn.
+    static func sendPrompt(_ target: String, _ text: String, _ run: Runner) -> Outcome {
+        let out = run(["agent", "prompt", target, text, "--wait",
+                       "--until", "working", "--until", "blocked", "--timeout", "10000"])
+        let status = agentStatus(out)
+        if status == "working" { return Outcome(output: "sent; \(target) is working", watch: target) }
+        if status == "blocked" { return Outcome(output: "\(target) needs approval:\n" + read(target, 30, run), watch: nil) }
+        return Outcome(output: out, watch: nil)
     }
 
     /// Waits until the agent is idle, done or blocked, then describes it for the voice model. The wait can last as
