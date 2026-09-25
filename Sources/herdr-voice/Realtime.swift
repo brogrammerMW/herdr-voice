@@ -30,7 +30,16 @@ final class Realtime {
     /// Agents currently being watched in the background.
     private(set) var busyAgents = Set<String>()
     /// A response is being generated; `response.cancel` is only valid while this is true.
-    private var responseActive = false
+    /// One response at a time: every reply request goes through here (see ResponseScheduler).
+    private var replies = ResponseScheduler()
+    private var responseActive: Bool { replies.responseActive }
+    /// A response.create is out and the provider hasn't confirmed it; an error then means it was refused.
+    private var awaitingCreated = false
+    /// Tool calls repeated by the model within a few seconds are answered, not run again.
+    private var deduper = CallDeduper()
+    /// Whether the developer's latest speech began while the assistant was audible. A "yes" like that can be the
+    /// assistant's own voice leaking into the mic, so it must not confirm anything.
+    private var speechOverlappedPlayback = false
     /// Set when the developer stops talking, until the reply starts; expires in case no reply comes.
     private var awaitingReplySince: Date?
     private var toolsRunning = 0
@@ -196,7 +205,8 @@ final class Realtime {
         keepalive?.cancel()
         keepalive = nil
         status = .disconnected
-        responseActive = false
+        replies.reset()
+        awaitingCreated = false
         awaitingReplySince = nil
         micShared.withLock { $0.midTurn = false }
         log("💤 \(why); session closed until you speak")
@@ -243,7 +253,7 @@ final class Realtime {
         guard !outbox.isEmpty else { return }
         outbox.forEach(sendRaw)
         outbox.removeAll()
-        sendRaw(["type": "response.create"])
+        if replies.wantReply() { requestResponse() }
     }
 
     private func connectionLost(_ task: URLSessionWebSocketTask, reason: Reconnect.Reason, detail: String) {
@@ -253,7 +263,8 @@ final class Realtime {
         keepalive?.cancel()
         keepalive = nil
         status = .disconnected
-        responseActive = false
+        replies.reset()
+        awaitingCreated = false
         awaitingReplySince = nil
         if !established { attempts += 1 }
         // The provider closed a quiet session: nothing to reconnect for until someone speaks.
@@ -305,7 +316,7 @@ final class Realtime {
     private func deliver(_ item: [String: Any]) {
         if status == .live && established {
             sendRaw(item)
-            sendRaw(["type": "response.create"])
+            if replies.wantReply() { requestResponse() } // otherwise it joins the reply already on its way
             return
         }
         outbox.append(item)
@@ -347,7 +358,8 @@ final class Realtime {
     func stopSpeech(reason: String) {
         guard responseActive || audio.isSpeaking else { return }
         if responseActive { sendRaw(["type": "response.cancel"]) }
-        responseActive = false
+        replies.reset()
+        awaitingCreated = false
         droppingAudio = true
         cutPlayback()
         log("⏹  stopped (\(reason))")
@@ -360,7 +372,8 @@ final class Realtime {
         case .tooLong:
             // Stop generating; audio already queued finishes, so the cut lands near the end of sentence two.
             if responseActive { sendRaw(["type": "response.cancel"]) }
-            responseActive = false
+            replies.reset()
+            awaitingCreated = false
             droppingAudio = true
             log("✂  cut after \(SpeechPolicy.maxSentences) sentences")
         case .leak(let what):
@@ -373,7 +386,7 @@ final class Realtime {
                     "[policy] You started reading \(what) aloud and were cut off. Say it again as one or two plain "
                     + "sentences with no code, paths, file names, URLs or diffs."]],
             ]])
-            sendRaw(["type": "response.create"])
+            if replies.wantReply() { requestResponse() }
         }
     }
 
@@ -409,7 +422,8 @@ final class Realtime {
         case .audioDelta(let item, let b64):
             if !droppingAudio { audio.play(base64: b64, item: item) }
         case .responseCreated:
-            responseActive = true
+            replies.responseCreated()
+            awaitingCreated = false
             micShared.withLock { $0.midTurn = false }
             awaitingReplySince = nil
             droppingAudio = false
@@ -423,7 +437,12 @@ final class Realtime {
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
             recap.add("you", t)
-            ConfirmGate.shared.heard(t)
+            if speechOverlappedPlayback {
+                log("… you spoke over the voice; that can't confirm anything (it may be its own echo). Say it again.")
+            } else {
+                ConfirmGate.shared.heard(t)
+            }
+            speechOverlappedPlayback = false
             retriedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
             if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
@@ -431,6 +450,7 @@ final class Realtime {
             if !muted { awaitingReplySince = Date() }
             micShared.withLock { $0.midTurn = false }
         case .speechStarted:
+            speechOverlappedPlayback = audio.isSpeaking // before barge-in stops the playback below
             lastSpeechStart = Date()
             micShared.withLock { $0.midTurn = true }
             awaitingReplySince = nil
@@ -441,15 +461,37 @@ final class Realtime {
         case .error(let msg):
             // A provider ending the session (idle, time limit) is routine: note it and let the close renew it.
             if Reconnect.isSessionEnd(msg) { closeReason = .sessionEnded } else { log("✖ \(msg)") }
+            // A refused response.create would otherwise leave the scheduler waiting forever.
+            if awaitingCreated {
+                awaitingCreated = false
+                if replies.responseDone() { requestResponse() }
+            }
         case .responseDone:
-            responseActive = false
             awaitingReplySince = nil
+            // Tool results from this turn are answered together, in one reply, once it's finished.
+            if replies.responseDone() { requestResponse() }
         case .ignored:
             break
         }
     }
 
+    private func requestResponse() {
+        awaitingCreated = true
+        sendRaw(["type": "response.create"])
+    }
+
     private func runTool(callID: String, name: String, args: String) {
+        guard deduper.admit(name: name, arguments: args) else {
+            log("⤫ \(name) repeated within seconds; not run again")
+            sendRaw(["type": "conversation.item.create", "item": [
+                "type": "function_call_output", "call_id": callID,
+                "output": "Duplicate of a call made moments ago; it was not run again. Don't repeat calls.",
+            ]])
+            replies.callStarted()
+            if replies.callFinished() { requestResponse() }
+            return
+        }
+        replies.callStarted()
         log("→ \(name) \(args)")
         if name == "run_shell", let cmd = Self.field(args, "command") {
             log("   $ \(cmd)")   // the exact command the developer is being asked to approve
@@ -468,7 +510,8 @@ final class Realtime {
                 self.sendRaw(["type": "conversation.item.create", "item": [
                     "type": "function_call_output", "call_id": callID, "output": outcome.output,
                 ]])
-                self.sendRaw(["type": "response.create"])
+                // One reply once every call from this turn has answered, not one per call.
+                if self.replies.callFinished() { self.requestResponse() }
             }
         }
     }
