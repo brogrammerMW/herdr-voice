@@ -8,8 +8,10 @@ speaker or tool privileges. The main process uses OpenLive's pinned `streamProvi
 
 ## Setup and run
 
-Prerequisites are macOS with WebGPU, Node 22.22.3, pnpm 11.5.2, Ollama with `qwen3.5:4b`, and Swift 5.10 or later.
-Keep Ollama in local-only mode (`OLLAMA_NO_CLOUD=1`). Then run:
+Local mode is a one-time setup from a source checkout. Until it has run, the orb's menu shows
+**Local OpenLive (not set up)**, greyed out. Prerequisites are macOS with WebGPU, Node 22 or later, pnpm 10 or later, Ollama with `qwen3.5:4b`, and Swift
+5.10 or later. `pnpm-lock.yaml` stays exact and is installed with `--frozen-lockfile`. Keep Ollama in local-only mode
+(`OLLAMA_NO_CLOUD=1`). Then run:
 
 ```bash
 ./scripts/local-openlive-setup
@@ -29,11 +31,33 @@ If the Electron child crashes mid-session, herdr-voice relaunches it and reconne
 conversation recap, in about 5 s on a warm model cache. A helper that keeps failing backs off like any lost connection
 (1, 2, 4 … 30 s) and gives up after 8 tries; ⌥⌘M or choosing Local from the orb then tries again.
 
-This version uses Electron's persistent Cache API for speech assets. Setup writes the verified URL, size, and SHA-256
-inventory to the untracked, mode-0600 file `local-openlive/.local-model-inventory.json`. Runtime compares the aggregate
-count, bytes, and digest with that file. It also performs real inference before it says ready. The OpenLive source and
-npm dependencies are exactly pinned. The pinned worker selects the model revisions. This version does not check in an
-immutable model weight manifest, so do not describe the browser model weights as revision-pinned.
+This version uses Electron's persistent Cache API for speech assets. The cache, Electron's other data, and the setup
+inventory live in a state directory outside the plugin folder, so a plugin update from `herdr plugin install` keeps
+them:
+
+| What | Where |
+|---|---|
+| State directory | `~/.local/state/herdr-voice/local-openlive` |
+| Electron data and model cache | `electron/` in the state directory |
+| Setup inventory | `model-inventory.json` in the state directory, mode 0600 |
+
+Swift passes the state directory to Electron in the boot JSON over stdin, never argv. The path is fixed, so setup from a
+plain terminal, the check script and the plugin pane always use the same directory. Herdr's per-plugin
+`HERDR_PLUGIN_STATE_DIR` is deliberately not used.
+
+Setup writes the verified URL, size, and SHA-256 inventory there. Runtime compares the aggregate count, bytes, and
+digest with that file. It also performs real inference before it says ready. A missing or different inventory stops
+startup and names the directory it checked.
+
+Earlier versions kept the cache in Electron's default `~/Library/Application Support/Electron` and the inventory in
+`local-openlive/.local-model-inventory.json`. Run `scripts/local-openlive-setup` once after updating. When the state
+directory has no cache yet, the helper copies the old one over first, so setup reuses it and writes the new inventory.
+Until then the menu entry stays greyed out. The helper copies instead of moving, so an older checkout keeps working;
+delete the old folder when you no longer need it. A legacy inventory still in the runtime folder is copied too.
+
+The OpenLive source and npm dependencies are exactly pinned. The pinned worker selects the model revisions. This
+version does not check in an immutable model weight manifest, so do not describe the browser model weights as
+revision-pinned.
 
 Useful checks:
 
