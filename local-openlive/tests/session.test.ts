@@ -205,6 +205,36 @@ describe("BridgeSession", () => {
     expect(cancelled).toContainEqual([0, 1]);
   });
 
+  it("treats synthesis cancelled mid-stream as expected, not an unhandled rejection", async () => {
+    // Mirrors InferenceClient: cancelTTS rejects the pending job with "synthesis cancelled".
+    let rejectJob!: (error: Error) => void;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { session, events } = harness({
+        stream: async function* (_request, signal) {
+          yield { type: "text", delta: "This sentence is being spoken now. " };
+          await new Promise((resolve) => signal.addEventListener("abort", resolve));
+          yield { type: "text", delta: "Never heard." };
+        },
+        synthesize: () => new Promise((_resolve, reject) => { rejectJob = reject; }),
+        cancelSynthesis: () => rejectJob(new Error("synthesis cancelled")),
+      });
+      await session.handle(setup());
+      await session.handle({ type: "conversation.text", epoch: 0, text: "hello", expects_reply: true });
+      const response = session.handle({ type: "response.create", epoch: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await session.handle({ type: "response.cancel", epoch: 0 });
+      await response;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toEqual([]);
+      expect(events.some((event) => event.type === "error")).toBe(false);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("truncates the history entry bound to that audio item", async () => {
     let answer = "First complete response for playback.";
     const { session, events } = harness({ stream: async function* () {

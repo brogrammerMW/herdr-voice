@@ -290,6 +290,9 @@ export class BridgeSession {
         this.deps.emit({ type: "response.done", epoch });
       }
     } finally {
+      // Early returns (cancel, newer epoch) and stream errors leave the speech chain unawaited; cancel() rejects
+      // its pending synthesis on purpose. A live failure was already reported through `await ttsChain` above.
+      ttsChain.catch(() => {});
       if (this.responseAbort === abort) this.responseAbort = undefined;
     }
   }
