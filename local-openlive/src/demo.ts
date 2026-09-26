@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { defaultStateDir } from "./state.js";
 
 const args = process.argv.slice(2);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ const electron = resolve(value("--electron") ?? "node_modules/.bin/electron");
 const main = join(here, "main.mjs");
 const token = randomBytes(32).toString("base64url");
 const child = spawn(electron, [main], { stdio: ["pipe", "pipe", "inherit"] });
-child.stdin.write(`${JSON.stringify({ token, brain: {
+child.stdin.write(`${JSON.stringify({ token, stateDir: defaultStateDir(), brain: {
   kind: "local", baseURL: "http://127.0.0.1:11434/v1", model: "qwen3.5:4b", protocol: "openai-chat",
 } })}\n`);
 

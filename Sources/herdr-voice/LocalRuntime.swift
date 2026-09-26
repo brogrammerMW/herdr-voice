@@ -35,7 +35,8 @@ final class LocalRuntime {
             throw RuntimeError.missing("Local OpenLive is not built. Run scripts/local-openlive-setup first.")
         }
         let token = try randomToken()
-        var boot: [String: Any] = ["token": token, "setup": setup, "brain": try brain(environment)]
+        let state = LocalState.directory(environment: environment)
+        var boot: [String: Any] = ["token": token, "stateDir": state.path, "setup": setup, "brain": try brain(environment)]
         if !setup { boot.removeValue(forKey: "setup") }
         let bootData = try JSONSerialization.data(withJSONObject: boot)
 
@@ -112,7 +113,7 @@ final class LocalRuntime {
             throw error
         }
         if !setup {
-            do { try verifyInventory(object, root: root) }
+            do { try verifyInventory(object, state: state) }
             catch {
                 stop(operation: operation, child: child)
                 throw error
@@ -138,11 +139,11 @@ final class LocalRuntime {
         let files = FileManager.default
         return files.isExecutableFile(atPath: root.appendingPathComponent("node_modules/.bin/electron").path)
             && files.fileExists(atPath: root.appendingPathComponent("dist/main.mjs").path)
-            && files.fileExists(atPath: root.appendingPathComponent(".local-model-inventory.json").path)
+            && files.fileExists(atPath: LocalState.inventory(in: LocalState.directory(environment: environment)).path)
     }
 
-    private func verifyInventory(_ readiness: [String: Any], root: URL) throws {
-        let file = root.appendingPathComponent(".local-model-inventory.json")
+    private func verifyInventory(_ readiness: [String: Any], state: URL) throws {
+        let file = LocalState.inventory(in: state)
         guard let data = try? Data(contentsOf: file),
               let expected = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let probe = readiness["probe"] as? [String: Any],
@@ -151,7 +152,8 @@ final class LocalRuntime {
               expected["bytes"] as? Int == actual["bytes"] as? Int,
               expected["digest"] as? String == actual["digest"] as? String
         else {
-            throw RuntimeError.failed("Local OpenLive model cache does not match its setup inventory. Run scripts/local-openlive-setup.")
+            throw RuntimeError.failed("Local OpenLive model cache in \(state.path) does not match its setup inventory. "
+                + "Run scripts/local-openlive-setup with the same HERDR_PLUGIN_STATE_DIR (unset means ~/.local/state/herdr-voice).")
         }
     }
 

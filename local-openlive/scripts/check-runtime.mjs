@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { inventoryFile, stateDir } from "./state-dir.mjs";
 import { readFile } from "node:fs/promises";
 
 const child = spawn("node_modules/.bin/electron", ["dist/main.mjs"], { stdio: ["pipe", "pipe", "inherit"] });
-child.stdin.write(`${JSON.stringify({ token: randomBytes(32).toString("base64url") })}\n`);
+child.stdin.write(`${JSON.stringify({ token: randomBytes(32).toString("base64url"), stateDir })}\n`);
 let output = "";
 try {
   for await (const chunk of child.stdout) {
@@ -20,12 +21,14 @@ try {
     }
     if (!ready) continue;
     if (ready.type !== "ready" || !ready.port || !ready.probe?.webgpu) throw new Error("offline runtime was not ready");
-    const expected = JSON.parse(await readFile(".local-model-inventory.json", "utf8"));
+    const expected = JSON.parse(await readFile(inventoryFile, "utf8").catch(() => {
+      throw new Error(`no setup inventory at ${inventoryFile}; run scripts/local-openlive-setup (it reuses the cached models)`);
+    }));
     for (const field of ["count", "bytes", "digest"]) {
       if (ready.probe.inventory?.[field] !== expected[field]) throw new Error(`offline model inventory ${field} changed`);
     }
     process.stdout.write(`${JSON.stringify({
-      status: "ready-offline", brain: ready.brain, brainProbe: ready.brainProbe,
+      status: "ready-offline", stateDir, brain: ready.brain, brainProbe: ready.brainProbe,
       webgpu: true, adapter: ready.probe.adapter,
       inventory: { count: ready.probe.inventory.count, bytes: ready.probe.inventory.bytes, digest: ready.probe.inventory.digest },
       sttProbeMs: ready.probe.sttProbeMs, ttsProbeMs: ready.probe.ttsProbeMs,

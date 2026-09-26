@@ -8,19 +8,27 @@ import { brainLabel, providerInfo, validateBrain, type BrainConfig } from "./bra
 import { validateManifest } from "./manifest.js";
 import { authorizeUpgrade } from "./security.js";
 import { BridgeSession, type WireMessage } from "./session.js";
+import { migrateLegacyState, PARTITION, statePaths } from "./state.js";
 
-type BootConfig = { token: string; setup?: boolean; brain?: BrainConfig };
+type BootConfig = { token: string; stateDir: string; setup?: boolean; brain?: BrainConfig };
 
 async function run(): Promise<void> {
 const boot = await readBootConfig();
 const brain = validateBrain(boot.brain ?? {
   kind: "local", baseURL: "http://127.0.0.1:11434/v1", model: "qwen3.5:4b", protocol: "openai-chat",
 });
+const here = dirname(fileURLToPath(import.meta.url));
+// Keep the model cache out of the plugin folder and Electron's default userData; both must be set before ready.
+const state = statePaths(boot.stateDir);
+for (const item of migrateLegacyState(state, app.getPath("userData"), dirname(here))) {
+  process.stderr.write(`local OpenLive: copied ${item} to ${state.stateDir}\n`);
+}
+app.setPath("userData", state.userData);
+app.setPath("sessionData", state.userData);
 await app.whenReady();
-const partition = "persist:herdr-local-openlive-v1";
+const partition = `persist:${PARTITION}`;
 const appSession = electronSession.fromPartition(partition);
 if (!boot.setup) await appSession.enableNetworkEmulation({ offline: true });
-const here = dirname(fileURLToPath(import.meta.url));
 const window = new BrowserWindow({
   show: false,
   width: 320,
