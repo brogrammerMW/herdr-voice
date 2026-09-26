@@ -50,3 +50,20 @@ import Testing
     try p.run(); p.waitUntilExit()
     #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "ran stop two words\n")
 }
+
+@Test func theVoicePaneStartsHiddenUnlessTurnedOff() {
+    #expect(Launch.startsHidden(environment: [:]))
+    #expect(Launch.startsHidden(environment: ["HERDR_VOICE_START_HIDDEN": "1"]))
+    #expect(!Launch.startsHidden(environment: ["HERDR_VOICE_START_HIDDEN": "0"]))
+    #expect(Launch.zoomArguments(pane: "w2G:p1") == ["pane", "zoom", "w2G:p1", "--on"])
+}
+
+@Test func theOrbMenuReadsWhetherTheVoicePaneIsHidden() {
+    #expect(VoicePane.isHidden(layout: #"{"result":{"layout":{"zoomed":true,"focused_pane_id":"w1:p1"}}}"#))
+    #expect(!VoicePane.isHidden(layout: #"{"result":{"layout":{"zoomed":false}}}"#))
+    #expect(!VoicePane.isHidden(layout: "garbage"))
+    #expect(VoicePane.showArguments(voicePane: "w1:p2") == ["pane", "zoom", "w1:p2", "--off"])
+    #expect(VoicePane.neighborArguments(voicePane: "w1:p2", direction: "up") == ["pane", "neighbor", "--pane", "w1:p2", "--direction", "up"])
+    #expect(VoicePane.neighbor(#"{"result":{"neighbor":{"direction":"up","neighbor_pane_id":"w1:p1","pane_id":"w1:p2"}}}"#) == "w1:p1")
+    #expect(VoicePane.neighbor(#"{"error":{"code":"no_neighbor"}}"#) == nil)
+}

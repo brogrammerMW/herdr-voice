@@ -166,8 +166,24 @@ let startedWith = provider
 let session = Realtime(provider: provider, key: key,
                        voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
+/// "Show voice pane" while it's hidden behind the pane it opened next to, "Hide voice pane" while it's in view. Only when
+/// herdr-voice runs in a Herdr pane.
+func voicePaneChoice() -> Orb.MenuChoice? {
+    guard env["HERDR_ENV"] == "1", let me = env["HERDR_PANE_ID"] else { return nil }
+    if VoicePane.isHidden(layout: HerdrTools.herdr(["pane", "layout", "--pane", me])) {
+        return Orb.MenuChoice(title: "Show voice pane", checked: false, enabled: true, separatorAfter: true) {
+            _ = HerdrTools.herdr(VoicePane.showArguments(voicePane: me))
+        }
+    }
+    let cover = VoicePane.hideNeighbors.lazy
+        .compactMap { VoicePane.neighbor(HerdrTools.herdr(VoicePane.neighborArguments(voicePane: me, direction: $0))) }.first
+    return Orb.MenuChoice(title: "Hide voice pane", checked: false, enabled: cover != nil, separatorAfter: true) {
+        if let cover { _ = HerdrTools.herdr(Launch.zoomArguments(pane: cover)) }
+    }
+}
+
 func modelChoices() -> [Orb.MenuChoice] {
-    ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
+    (voicePaneChoice().map { [$0] } ?? []) + ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
         Orb.MenuChoice(title: entry.title, checked: entry.checked, enabled: entry.enabled) {
             guard let found = entry.provider.apiKey(environment: env) else { return }
             session.switchProvider(to: entry.provider, key: found.value,

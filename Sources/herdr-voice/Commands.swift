@@ -46,6 +46,12 @@ func stopRunning() -> Int32 {
 func openVoicePane(provider: String?, environment env: [String: String]) -> Bool {
     let out = HerdrTools.herdr(Launch.paneOpenArguments(pane: env["HERDR_PANE_ID"], provider: provider))
     guard !out.contains("\"error\"") else { return false }
-    print("🎙  herdr-voice is starting in the pane below. Close that pane, or run herdr-voice stop, to end it.")
+    if Launch.startsHidden(environment: env), let pane = env["HERDR_PANE_ID"],
+       !HerdrTools.herdr(Launch.zoomArguments(pane: pane)).contains("\"error\"") {
+        print("🎙  herdr-voice is starting in a pane hidden behind this one; unzoom this pane to see it. "
+              + "Stop it with herdr-voice stop.")
+    } else {
+        print("🎙  herdr-voice is starting in the pane below. Close that pane, or run herdr-voice stop, to end it.")
+    }
     return true
 }
