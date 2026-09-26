@@ -11,10 +11,17 @@ public enum Launch {
             || env["HERDR_ENV"] != "1"                    // not in Herdr: nowhere to open a pane
     }
 
-    /// Whether the pane herdr-voice was started from is zoomed over the new voice pane, keeping the voice out of
-    /// sight (the orb shows its state). On unless HERDR_VOICE_START_HIDDEN=0.
+    /// Whether the voice pane starts hidden behind the pane you're in (the orb shows the voice's state). On unless
+    /// HERDR_VOICE_START_HIDDEN=0.
     public static func startsHidden(environment env: [String: String]) -> Bool {
         env["HERDR_VOICE_START_HIDDEN"] != "0"
+    }
+
+    /// Whether this process hides its own pane as it starts up: only as the plugin's voice pane in Herdr. With --here
+    /// the voice runs in your own pane, and zooming a neighbour over it would hide your work.
+    public static func hidesOnStart(environment env: [String: String]) -> Bool {
+        startsHidden(environment: env) && env["HERDR_ENV"] == "1" && env["HERDR_PANE_ID"] != nil
+            && env["HERDR_PLUGIN_ENTRYPOINT_ID"] != nil
     }
 
     /// Zooms `pane` to fill its tab, covering the voice pane that just opened next to it.
@@ -65,7 +72,14 @@ public enum VoicePane {
     /// Unzooms the tab from the voice pane's side, bringing it into view.
     public static func showArguments(voicePane: String) -> [String] { ["pane", "zoom", voicePane, "--off"] }
 
-    /// The pane to zoom over the voice pane to hide it: the one above it (where it opened below), else left of it.
+    /// The pane you're in, from the voice pane's tab layout: the focused pane, unless that's the voice pane itself.
+    public static func userPane(layout json: String, voicePane: String) -> String? {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        let focused = ((obj?["result"] as? [String: Any])?["layout"] as? [String: Any])?["focused_pane_id"] as? String
+        return focused == voicePane ? nil : focused
+    }
+
+    /// Otherwise the pane to zoom over the voice pane to hide it: the one above it (where it opened below), else left.
     public static let hideNeighbors = ["up", "left"]
     public static func neighborArguments(voicePane: String, direction: String) -> [String] {
         ["pane", "neighbor", "--pane", voicePane, "--direction", direction]

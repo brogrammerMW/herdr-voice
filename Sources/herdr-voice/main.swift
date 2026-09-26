@@ -140,6 +140,12 @@ if let holder = lock.holder {
     exit(1)
 }
 
+// Starting as the plugin's voice pane: hide it behind the pane you're in right away, before connecting, however
+// the pane was opened (herdr-voice, a keybinding, or herdr plugin pane open). The orb's menu shows it again.
+if Launch.hidesOnStart(environment: env), let me = env["HERDR_PANE_ID"] {
+    hideVoicePane(me)
+}
+
 // No key yet: in a terminal, ask for it right away (first run); otherwise say how to add one.
 if provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
     print("No \(provider.menuTitle) API key yet.")
@@ -175,11 +181,7 @@ func voicePaneChoice() -> Orb.MenuChoice? {
             _ = HerdrTools.herdr(VoicePane.showArguments(voicePane: me))
         }
     }
-    let cover = VoicePane.hideNeighbors.lazy
-        .compactMap { VoicePane.neighbor(HerdrTools.herdr(VoicePane.neighborArguments(voicePane: me, direction: $0))) }.first
-    return Orb.MenuChoice(title: "Hide voice pane", checked: false, enabled: cover != nil, separatorAfter: true) {
-        if let cover { _ = HerdrTools.herdr(Launch.zoomArguments(pane: cover)) }
-    }
+    return Orb.MenuChoice(title: "Hide voice pane", checked: false, enabled: true, separatorAfter: true) { hideVoicePane(me) }
 }
 
 func modelChoices() -> [Orb.MenuChoice] {

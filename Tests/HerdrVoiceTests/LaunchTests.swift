@@ -67,3 +67,18 @@ import Testing
     #expect(VoicePane.neighbor(#"{"result":{"neighbor":{"direction":"up","neighbor_pane_id":"w1:p1","pane_id":"w1:p2"}}}"#) == "w1:p1")
     #expect(VoicePane.neighbor(#"{"error":{"code":"no_neighbor"}}"#) == nil)
 }
+
+@Test func onlyThePluginsVoicePaneHidesItselfOnStart() {
+    let pane = ["HERDR_ENV": "1", "HERDR_PANE_ID": "w1:p2", "HERDR_PLUGIN_ENTRYPOINT_ID": "voice"]
+    #expect(Launch.hidesOnStart(environment: pane))
+    #expect(!Launch.hidesOnStart(environment: pane.merging(["HERDR_VOICE_START_HIDDEN": "0"]) { $1 }))
+    #expect(!Launch.hidesOnStart(environment: ["HERDR_ENV": "1", "HERDR_PANE_ID": "w1:p1"])) // --here in your own pane
+    #expect(!Launch.hidesOnStart(environment: [:]))
+}
+
+@Test func theVoiceHidesBehindThePaneYouAreIn() {
+    let layout = #"{"result":{"layout":{"focused_pane_id":"w1:p1","zoomed":false}}}"#
+    #expect(VoicePane.userPane(layout: layout, voicePane: "w1:p2") == "w1:p1")
+    #expect(VoicePane.userPane(layout: layout, voicePane: "w1:p1") == nil) // focus is on the voice pane: use a neighbour
+    #expect(VoicePane.userPane(layout: "garbage", voicePane: "w1:p2") == nil)
+}
