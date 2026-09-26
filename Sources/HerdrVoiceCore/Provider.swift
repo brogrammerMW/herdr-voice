@@ -192,6 +192,14 @@ public enum Keychain {
     }
 }
 
+/// When herdr-voice starts, or the model is switched from the orb, the voice introduces itself and says it's ready.
+/// In its own words each time: a fixed line sounds canned.
+public enum Greeting {
+    public static let prompt = "[startup] A new session just started. Greet the developer: introduce yourself naturally "
+        + "as herdr-voice, the voice for their Herdr coding agents, and say you're ready to help. One or two short "
+        + "sentences in your own words, no fixed script, and don't list your features. Then stay quiet until they speak."
+}
+
 public let voiceInstructions = """
 You are the voice of a developer's terminal. Coding agents (Claude Code, Codex) run in Herdr panes; \
 you talk with the developer and hand real work to those agents with your tools.
