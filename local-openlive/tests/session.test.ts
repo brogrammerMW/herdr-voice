@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeSession, type BridgeDependencies, type WireMessage } from "../src/session.js";
 
 const tools = [
@@ -16,6 +16,23 @@ function setup(): Extract<WireMessage, { type: "session.update" }> {
       tool_manifest: { profile: "test1", count: 1, names: ["list_agents"], digest: "test-digest" },
     },
   };
+}
+
+/** 20 ms mic packets (PCM16 24 kHz, like Swift sends): `speechMs` of a 200 Hz tone at `level`, then quiet. */
+function packets(speechMs: number, level = 0.2, quietMs = 460): string[] {
+  const frames = (speechMs + quietMs) / 20;
+  return Array.from({ length: frames }, (_, frame) => {
+    const data = Buffer.alloc(480 * 2);
+    const amplitude = frame * 20 < speechMs ? level : 0.0005;
+    for (let i = 0; i < 480; i++) data.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 200 * (frame * 480 + i) / 24_000) * amplitude * 32767), i * 2);
+    return data.toString("base64");
+  });
+}
+
+async function say(session: BridgeSession, epoch: number, id: string, speechMs = 600, level = 0.2): Promise<void> {
+  await session.handle({ type: "input.begin", epoch, utterance_id: id });
+  for (const audio of packets(speechMs, level)) await session.handle({ type: "input.append", epoch, utterance_id: id, audio });
+  await session.handle({ type: "input.commit", epoch, utterance_id: id });
 }
 
 function harness(overrides: Partial<BridgeDependencies> = {}) {
@@ -42,9 +59,7 @@ describe("BridgeSession", () => {
   it("creates a microphone transcript only after committed PCM", async () => {
     const { session, events } = harness();
     await session.handle(setup());
-    await session.handle({ type: "input.begin", epoch: 1, utterance_id: "u1" });
-    await session.handle({ type: "input.append", epoch: 1, utterance_id: "u1", audio: "AAAAAA==" });
-    await session.handle({ type: "input.commit", epoch: 1, utterance_id: "u1" });
+    await say(session, 1, "u1");
     expect(events).toContainEqual({
       type: "input.transcription.completed", epoch: 1, utterance_id: "u1",
       source: "microphone", transcript: "List my agents.",
@@ -83,8 +98,7 @@ describe("BridgeSession", () => {
     await session.handle(setup());
     await session.handle({ type: "conversation.text", epoch: 0, text: "list", expects_reply: true });
     await session.handle({ type: "response.create", epoch: 0 });
-    await session.handle({ type: "input.begin", epoch: 1, utterance_id: "u1" });
-    await session.handle({ type: "input.commit", epoch: 1, utterance_id: "u1" });
+    await say(session, 1, "u1");
     await session.handle({ type: "response.create", epoch: 1 });
     const roles = () => session.history.map((m) => m.role);
     expect(roles()).toEqual(["system", "user", "assistant", "tool", "user", "assistant"]);
@@ -236,5 +250,71 @@ describe("BridgeSession", () => {
       if (message.role === "assistant") message.toolCalls?.forEach((call) => known.add(call.id));
       if (message.role === "tool") expect(known.has(message.callId)).toBe(true);
     }
+  });
+});
+
+describe("phantom microphone turns (#82)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const heard = (events: Record<string, unknown>[]) =>
+    events.filter((e) => e.type === "input.transcription.completed").map((e) => e.transcript);
+
+  it("drops a blip too short to be speech without transcribing it", async () => {
+    const transcribe = vi.fn(async () => "for you.");
+    const { session, events } = harness({ transcribe });
+    await session.handle(setup());
+    await say(session, 1, "blip", 100);
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(heard(events)).toEqual([]);
+  });
+
+  it("drops near-silence that opened the gate", async () => {
+    const transcribe = vi.fn(async () => "through.");
+    const { session, events } = harness({ transcribe });
+    await session.handle(setup());
+    await say(session, 1, "hiss", 600, 0.003);
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(heard(events)).toEqual([]);
+  });
+
+  it("still hears a short real answer", async () => {
+    const { session, events } = harness({ transcribe: async () => "Yes." });
+    await session.handle(setup());
+    await say(session, 1, "yes", 280);
+    expect(heard(events)).toEqual(["Yes."]);
+  });
+
+  it("holds a turn that trails off and transcribes it together with the next one", async () => {
+    const lengths: number[] = [];
+    const texts = ["Tell claude to", "Tell claude to run the tests."];
+    const { session, events } = harness({ transcribe: async (audio) => { lengths.push(audio.length); return texts[lengths.length - 1]!; } });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    expect(heard(events)).toEqual([]);
+    await say(session, 2, "b");
+    expect(lengths[1]).toBeGreaterThan(lengths[0]! * 1.9);
+    expect(events.filter((e) => e.type === "input.transcription.completed"))
+      .toEqual([{ type: "input.transcription.completed", epoch: 2, utterance_id: "b", source: "microphone",
+                  transcript: "Tell claude to run the tests." }]);
+    expect(session.history.filter((m) => m.role === "user")).toEqual([{ role: "user", text: "Tell claude to run the tests." }]);
+  });
+
+  it("sends a held turn once nobody continues it", async () => {
+    vi.useFakeTimers();
+    const { session, events } = harness({ transcribe: async () => "Close the build pane and" });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    expect(heard(events)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(heard(events)).toEqual(["Close the build pane and"]);
+  });
+
+  it("drops a held turn when the mic is muted", async () => {
+    vi.useFakeTimers();
+    const { session, events } = harness({ transcribe: async () => "Close the build pane and" });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    await session.handle({ type: "input.clear", epoch: 2 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heard(events)).toEqual([]);
   });
 });

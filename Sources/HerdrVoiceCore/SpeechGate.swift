@@ -28,7 +28,7 @@ public struct SpeechGate<Chunk> {
     public static var onsetChunks: Int { 3 }       // 60 ms
     public static var preRollChunks: Int { 15 }    // 300 ms
     public static var hangoverChunks: Int { 40 }   // 800 ms
-    public static var localHangoverChunks: Int { 8 } // 160 ms, measured separately from cloud server VAD
+    public static var localHangoverChunks: Int { 28 } // 560 ms, upstream OpenLive's 550 ms: shorter split sentences at pauses
     public static var maxHoldChunks: Int { 400 }   // 8 s
     public static var floorWindowChunks: Int { 150 } // 3 s
     /// Audio needed before the first opening, so a hissy mic can't trigger it before its floor is known.

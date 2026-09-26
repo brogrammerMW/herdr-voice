@@ -107,6 +107,13 @@ Confirmation behavior is unchanged. Only a later real Whisper microphone transcr
 typed context, reports, model text and tool output cannot. Speech that began over playback is retained as overlapped
 provenance and cannot confirm an action.
 
+## Turn-taking
+
+Local mode follows upstream OpenLive's defaults. A turn ends after 560 ms of quiet, so a short pause mid-sentence
+doesn't cut you off. Utterances with less than 200 ms of speech-level audio (clicks, coughs, hiss, echo tails) are
+dropped before Whisper sees them, because Whisper invents words for noise. A transcript that trails off ("tell claude
+to…") is held and joined with what you say next; if you say nothing for 4 s, it's sent as is.
+
 ## Latency evidence
 
 The demo's `commitToFirstNonSilentPCMProxyMs` measures input commit to the first returned PCM packet whose absolute
