@@ -179,7 +179,8 @@ func declineKeysPassStraightThrough(key: String) {
         DispatchQueue.global().async { c.resume(returning: close("close_workspace", "forge", confirmed: true, h, g)) }
     }
     #expect(out.hasPrefix("done"))
-    #expect(Date().timeIntervalSince(start) < 1.5) // woken by the yes, not by the 5 s deadline
+    // Woken by the yes, not by the 5 s deadline. Loose bound: a busy CI runner delays the GCD-scheduled yes (1.85 s seen).
+    #expect(Date().timeIntervalSince(start) < 4)
 }
 
 @Test func anUnansweredConfirmationGivesUpAtTheDeadline() {
