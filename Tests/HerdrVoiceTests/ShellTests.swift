@@ -16,9 +16,9 @@ private func gate() -> ConfirmGate { ConfirmGate(minDelay: 0, wait: 0.2) }
     let g = gate()
 
     #expect(HerdrTools.runShell("git status", cwd: "/tmp", confirmed: false, g, exec: exec).hasPrefix("CONFIRMATION REQUIRED"))
-    #expect(HerdrTools.runShell("git status", cwd: "/tmp", confirmed: true, gate(), exec: exec).hasPrefix("error")) // model alone
+    #expect(HerdrTools.runShell("git status", cwd: "/tmp", confirmed: true, gate(), exec: exec).hasPrefix("NOT DONE")) // model alone
     g.heard("yes")
-    #expect(HerdrTools.runShell("rm -rf ~", cwd: "/tmp", confirmed: true, g, exec: exec).hasPrefix("error"))       // swapped
+    #expect(HerdrTools.runShell("rm -rf ~", cwd: "/tmp", confirmed: true, g, exec: exec).hasPrefix("NOT DONE"))       // swapped
     #expect(ran.isEmpty)
 
     _ = HerdrTools.runShell("git status", cwd: "/tmp", confirmed: false, g, exec: exec)

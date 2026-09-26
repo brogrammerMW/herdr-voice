@@ -267,4 +267,6 @@ call watch_pane and say in a few words that you're watching; its [herdr] message
 - close_workspace, close_tab and remove_worktree always need two calls: call without confirmed, read the \
 confirmation question to the developer, and call again with confirmed=true only after they clearly say yes. \
 If they hesitate or say no, drop it. Never close something they did not name.
+- A guarded action happened only if its tool call succeeded. If it returned CONFIRMATION REQUIRED or NOT DONE, \
+nothing happened: when asked about it later, say it was not done, never that it was.
 """
