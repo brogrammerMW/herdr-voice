@@ -46,6 +46,13 @@ public enum WindowPin {
         }
     }
 
+    /// Whether the orb panel has to be ordered front again. The tracker reports only changes, so once something
+    /// else orders the panel out (seen once, 13 s into a session, with the Herdr window still on screen) or
+    /// leaves it on another Space, nothing would ever show it again; a periodic check does.
+    public static func needsReassert(wantsVisible: Bool, isVisible: Bool, onActiveSpace: Bool) -> Bool {
+        wantsVisible && (!isVisible || !onActiveSpace)
+    }
+
     /// The window to pin to, or nil to hide the orb. `windows` is all windows, on-screen ones front to back.
     ///
     /// Focus doesn't matter: the orb stays on the Herdr window, and visible, while that window is on screen, even

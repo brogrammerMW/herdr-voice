@@ -16,6 +16,11 @@ final class Orb {
     }
 
     private static let size: CGFloat = 96
+    static let level: NSWindow.Level = .popUpMenu
+    static let collectionBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    /// True whenever the orb should be on screen; only `follow(nil)` clears it.
+    private var wantsVisible = true
+    private var lastReassertLog = Date.distantPast
     private static let sphereInset = size * 0.18
     private let panel: NSPanel
     private let glow = CAGradientLayer()
@@ -79,8 +84,10 @@ final class Orb {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Above every app window, the Dock, the menu bar and status items, and (with the behaviours below) over
+        // full-screen Spaces. Not higher: the orb's own context menu opens at this level and must stay on top of it.
+        panel.level = Orb.level
+        panel.collectionBehavior = Orb.collectionBehavior
         panel.hidesOnDeactivate = false
 
         view = ClickView(frame: panel.contentRect(forFrameRect: panel.frame), onClick: onClick, menuChoices: menuChoices,
@@ -191,16 +198,33 @@ final class Orb {
     func follow(_ window: NSRect?) {
         inCorner = false
         guard let w = window else {
+            wantsVisible = false
             if panel.isVisible { panel.orderOut(nil) }
             return
         }
+        wantsVisible = true
         let origin = NSPoint(x: w.minX + 4, y: w.minY + 4)
         if panel.frame.origin != origin { panel.setFrameOrigin(origin) }
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 
+    /// Once a second: if the panel should be showing but isn't (ordered out by something other than `follow`, or
+    /// left on another Space), bring it back. Cheap: two property reads when nothing is wrong.
+    private func reassert() {
+        guard WindowPin.needsReassert(wantsVisible: wantsVisible, isVisible: panel.isVisible,
+                                      onActiveSpace: panel.isOnActiveSpace) else { return }
+        if Date().timeIntervalSince(lastReassertLog) > 60 {
+            lastReassertLog = Date()
+            log("◎ the orb had been hidden; showing it again")
+        }
+        panel.level = Orb.level
+        panel.collectionBehavior = Orb.collectionBehavior
+        panel.orderFrontRegardless()
+    }
+
     /// Fallback when there is no Herdr window to follow: the screen corner, always visible.
     func showInScreenCorner() {
+        wantsVisible = true
         guard !inCorner || !panel.isVisible else { return }
         inCorner = true
         place()
@@ -217,6 +241,9 @@ final class Orb {
     /// while idle, run in `.common` mode (not paused by menu tracking), and stop entirely while the panel is
     /// hidden, which AppKit does for us (measured: 62/s visible, 32/s at the idle rate, 0/s ordered out).
     func run(_ frame: @escaping () -> Frame) {
+        // A timer, not the display link: the link stops while the panel is hidden, which is exactly when this matters.
+        let watchdog = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.reassert() }
+        RunLoop.main.add(watchdog, forMode: .common)
         driver.fire = { [weak self] in
             guard let self, self.panel.isVisible else { return }
             let f = frame()
