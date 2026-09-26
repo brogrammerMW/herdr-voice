@@ -15,6 +15,8 @@ public final class OpenAIRealtimeWire: Wire {
         switch command {
         case let .setup(instructions, voice, _):
             return [provider.sessionUpdate(instructions: instructions, voice: voice)]
+        case .inputStarted:
+            return []
         case .appendAudio(let b64):
             return [["type": "input_audio_buffer.append", "audio": b64]]
         case .clearInput:

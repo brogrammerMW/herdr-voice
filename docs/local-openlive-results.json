@@ -1,0 +1,24 @@
+{
+  "kind": "local-openlive-integrated-smoke",
+  "date": "2026-09-25",
+  "hardware": "Apple M4 Pro, 48 GB, WebGPU Metal 3",
+  "sourceCommit": "849173cd1c8c17a95d600b17b428c301722bf5df",
+  "speech": {
+    "format": "fp32",
+    "offlineCacheEntries": 15,
+    "offlineCacheBytes": 512501553,
+    "offlineCacheDigest": "7579d5d49d4b465b4c83ada81a3977e093cf0fd4bdcb090bdd27406197b0f51a",
+    "offlineReadinessProbeMs": { "sttSilence": 121.8, "ttsShortPhrase": 234.1 }
+  },
+  "brain": { "endpoint": "loopback Ollama", "model": "qwen3.5:4b", "inferenceProbe": "passed" },
+  "strictToolSmoke": {
+    "runs": 1,
+    "fixture": "list-my-herdr-agents.wav",
+    "realSwiftTool": "list_agents",
+    "toolCalls": 1,
+    "commitToFirstNonSilentPCMProxyMs": 9645.5,
+    "physicalSpeakerOnset": "not measured",
+    "cloudComparable": false,
+    "targetUnder500ms": false
+  }
+}

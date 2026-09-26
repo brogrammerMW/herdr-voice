@@ -35,14 +35,41 @@ public enum Reconnect {
 public struct Recap {
     public let limit: Int
     public private(set) var lines: [String] = []
+    private var itemIDs: [String?] = []
 
     public init(limit: Int = 12) { self.limit = limit }
 
-    public mutating func add(_ speaker: String, _ text: String) {
+    public mutating func add(_ speaker: String, _ text: String, itemID: String? = nil) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         lines.append("\(speaker): \(t.count > 300 ? String(t.prefix(300)) + "…" : t)")
-        if lines.count > limit { lines.removeFirst(lines.count - limit) }
+        itemIDs.append(itemID)
+        if lines.count > limit {
+            let excess = lines.count - limit
+            lines.removeFirst(excess)
+            itemIDs.removeFirst(excess)
+        }
+    }
+
+    public mutating func replaceLast(_ speaker: String, with text: String) {
+        guard let index = lines.lastIndex(where: { $0.hasPrefix("\(speaker): ") }) else { return }
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty {
+            lines.remove(at: index)
+            itemIDs.remove(at: index)
+        }
+        else { lines[index] = "\(speaker): \(value.count > 300 ? String(value.prefix(300)) + "…" : value)" }
+    }
+
+    public mutating func replace(itemID: String, speaker: String, with text: String) {
+        guard let index = itemIDs.lastIndex(where: { $0 == itemID }) else { return }
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty {
+            lines.remove(at: index)
+            itemIDs.remove(at: index)
+        } else {
+            lines[index] = "\(speaker): \(value.count > 300 ? String(value.prefix(300)) + "…" : value)"
+        }
     }
 
     /// The context message for a fresh session, or nil when nothing was said yet.

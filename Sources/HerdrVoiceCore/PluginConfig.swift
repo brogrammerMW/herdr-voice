@@ -34,7 +34,7 @@ public enum PluginConfig {
     # herdr-voice settings. Uncomment a line to use it; restart herdr-voice to apply.
     # API keys don't go here: run `herdr-voice setup` (they're kept in your macOS Keychain).
 
-    # AI model: grok, openai or gemini
+    # AI model: local, grok, openai or gemini
     # HERDR_VOICE_PROVIDER=grok
     # Voice: eve, rex, ara, sal, leo (Grok); marin, cedar, ... (OpenAI); Kore, Puck, ... (Gemini)
     # HERDR_VOICE_VOICE=eve
@@ -48,6 +48,13 @@ public enum PluginConfig {
     # HERDR_VOICE_ORB_PIN=0
     # Gemini Live model
     # HERDR_VOICE_GEMINI_MODEL=gemini-2.5-flash-native-audio-latest
+    # Local OpenLive source runtime (after scripts/local-openlive-setup)
+    # HERDR_VOICE_LOCAL_OPENLIVE_DIR=/absolute/path/to/herdr-voice/local-openlive
+    # Local brain defaults: loopback Ollama /v1/chat/completions, Qwen 3.5 4B, reasoning disabled
+    # HERDR_VOICE_LOCAL_BRAIN_MODEL=qwen3.5:4b
+    # HERDR_VOICE_LOCAL_BRAIN_URL=http://127.0.0.1:11434/v1
+    # HERDR_VOICE_LOCAL_BRAIN_PROTOCOL=openai-chat
+    # HERDR_VOICE_LOCAL_BRAIN_REASONING=none
     # Mute hotkey key code (default 46 = M, with Option+Command)
     # HERDR_VOICE_HOTKEY_KEYCODE=46
 

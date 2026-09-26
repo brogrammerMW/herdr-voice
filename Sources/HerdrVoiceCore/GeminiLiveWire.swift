@@ -76,6 +76,8 @@ public final class GeminiLiveWire: Wire {
         switch command {
         case let .setup(instructions, voice, resumeHandle):
             return [setupMessage(instructions: instructions, voice: voice, resumeHandle: resumeHandle)]
+        case .inputStarted:
+            return []
         case .appendAudio(let b64):
             return [["realtimeInput": ["audio": ["data": b64, "mimeType": Self.inputMimeType]]]]
         case .clearInput, .audioPaused:

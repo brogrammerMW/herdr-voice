@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+mkdir -p "${repo_root}/bench-results"
+cd "${repo_root}/local-openlive"
+exec node dist/demo.mjs --herdr "${repo_root}/.build/release/herdr-voice" --electron "${repo_root}/local-openlive/node_modules/.bin/electron" --output "${repo_root}/bench-results/local-openlive-demo.wav" "$@"

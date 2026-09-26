@@ -10,6 +10,7 @@ final class Realtime {
     private(set) var provider: Provider
     private var key: String
     private var voice: String
+    private var requestOverride: URLRequest?
     let audio = Audio()
     private var socket: URLSessionWebSocketTask?
     /// The provider's wire protocol for the current connection (see Wire). Replaced on every connect.
@@ -32,9 +33,6 @@ final class Realtime {
             micShared.withLock { $0.muted = m }
         }
     }
-    /// Whether mic audio may leave the Mac. Read on the audio thread, so it lives behind a lock rather than
-    /// being derived from `muted`/`status` there (a stale read could send audio just after muting).
-    private let mayStream = OSAllocatedUnfairLock(initialState: false)
     /// Tool calls made after an agent report but before the developer speaks again are not user-initiated.
     private var lastSpeechStart = Date.distantPast
     private var lastReport = Date.distantPast
@@ -114,11 +112,13 @@ final class Realtime {
     /// Shared between the mic queue and main.
     private struct MicShared {
         var muted = false
+        var local = false
+        var mayStream = false
         /// The provider has heard speech start and not yet end: keep streaming so it sees the turn finish.
         var midTurn = false
         var lastSpeech = Date()
         /// Speech captured while the session was closed or reopening, sent once it's up (at most 10 s).
-        var held: [String] = []
+        var held = HeldMicAudio()
         /// The current connection's wire, for encoding audio on the mic queue.
         var wire: Wire?
         /// The last time the mic heard a speech-loud chunk (above the gate's opening level).
@@ -129,13 +129,17 @@ final class Realtime {
     private(set) var dormant = false
     /// A reconnect is already scheduled by the backoff.
     private var retryPending = false
+    private var providerPreparing = false
     private var quietTimer: DispatchSourceTimer?
 
-    init(provider: Provider, key: String, voice: String) {
+    init(provider: Provider, key: String, voice: String, request: URLRequest? = nil) {
         self.provider = provider
         self.key = key
         self.voice = voice
+        self.requestOverride = request
         self.wire = provider.makeWire()
+        gate.policy = provider == .local ? .local : .cloud
+        micShared.withLock { $0.local = provider == .local }
         audio.onMic = { [weak self] b64, level in self?.micChunk(b64, level: level) }
     }
 
@@ -147,30 +151,64 @@ final class Realtime {
 
     /// On the mic queue, every 20 ms.
     private func micChunk(_ b64: String, level: Float) {
-        let (muted, midTurn) = micShared.withLock { ($0.muted, $0.midTurn) }
+        let (muted, midTurn, local) = micShared.withLock { ($0.muted, $0.midTurn, $0.local) }
+        let wantedPolicy: SpeechGate<String>.Policy = local ? .local : .cloud
+        if gate.policy != wantedPolicy {
+            gate.policy = wantedPolicy
+            gate.reset()
+        }
         if muted {
             gate.reset()
             return
         }
         let wasOpen = gate.isOpen
         if gated && level > gate.openThreshold { micShared.withLock { $0.lastLoud = Date() } }
-        let chunks = gated ? gate.process(b64, level: level, holdOpen: midTurn) : [b64]
-        if gateDebug && gated { debugMeter(level: level, opened: gate.isOpen && !wasOpen, closed: wasOpen && !gate.isOpen) }
+        let useGate = gated || local
+        let chunks = useGate ? gate.process(b64, level: level, holdOpen: local ? false : midTurn) : [b64]
+        let opened = gate.isOpen && !wasOpen
+        let closed = wasOpen && !gate.isOpen
+        if gateDebug && useGate { debugMeter(level: level, opened: opened, closed: closed) }
         guard !chunks.isEmpty else { return }
-        if mayStream.withLock({ $0 }) {
-            if gated { micShared.withLock { $0.lastSpeech = Date() } }
-            let wire = micShared.withLock { $0.wire }
-            chunks.forEach { chunk in wire?.encode(.appendAudio(chunk)).forEach(sendRaw) }
+        let stream = { [weak self] (wire: Wire, local: Bool) in
+            guard let self else { return }
+            if useGate { self.micShared.withLock { $0.lastSpeech = Date() } }
+            if local && opened {
+                wire.encode(.inputStarted(utteranceID: UUID().uuidString)).forEach(self.sendRaw)
+                DispatchQueue.main.async { self.handle(.speechStarted) }
+            }
+            chunks.forEach { chunk in wire.encode(.appendAudio(chunk)).forEach(self.sendRaw) }
             // The gate just closed: tell the provider the stream paused (Gemini ends the turn on it).
-            if wasOpen && !gate.isOpen { wire?.encode(.audioPaused).forEach(sendRaw) }
+            if closed {
+                wire.encode(.audioPaused).forEach(self.sendRaw)
+                if local { DispatchQueue.main.async { self.handle(.speechStopped) } }
+            }
+        }
+        let active = micShared.withLock { state in
+            (wire: state.mayStream ? state.wire : nil, local: state.local)
+        }
+        if let wire = active.wire {
+            stream(wire, active.local)
             return
         }
-        // No session right now (closed while quiet, or reopening): keep the speech and bring the session back.
-        micShared.withLock {
-            $0.held.append(contentsOf: chunks)
-            if $0.held.count > 500 { $0.held.removeFirst($0.held.count - 500) }
-            $0.lastSpeech = Date()
+        // No session right now (closed while quiet, warming, or reconnecting): retain at most ten seconds.
+        let held = micShared.withLock { state -> (wire: Wire?, local: Bool) in
+            if state.mayStream {
+                return (state.wire, state.local)
+            }
+            if state.local {
+                state.held.appendLocal(chunks, opened: opened, closed: closed, utteranceID: UUID().uuidString)
+            } else {
+                state.held.appendCloud(chunks, opened: opened, closed: closed)
+            }
+            state.lastSpeech = Date()
+            return (nil, state.local)
         }
+        if let wire = held.wire {
+            stream(wire, held.local)
+            return
+        }
+        if held.local && opened { DispatchQueue.main.async { self.handle(.speechStarted) } }
+        if held.local && closed { DispatchQueue.main.async { self.handle(.speechStopped) } }
         DispatchQueue.main.async { self.wake() }
     }
 
@@ -194,7 +232,7 @@ final class Realtime {
     /// after giving up. Never while a retry is already scheduled: speech must not defeat the backoff, or every
     /// sound during an outage would hammer the provider with connects.
     private func wake() {
-        guard status == .disconnected, !muted, !retryPending else { return }
+        guard status == .disconnected, !muted, !retryPending, !providerPreparing else { return }
         if dormant {
             dormant = false
             attempts = 0
@@ -203,12 +241,19 @@ final class Realtime {
         connect()
     }
 
-    private func flushHeldAudio() {
-        let held = micShared.withLock { s -> [String] in
-            defer { s.held.removeAll() }
-            return s.held
+    private func activateHeldAudio() -> Bool {
+        micShared.withLock { s in
+            let held = s.held.drain()
+            let hadAudio = held.utteranceID != nil || !held.chunks.isEmpty
+            if let id = held.utteranceID {
+                wire.encode(.inputStarted(utteranceID: id)).forEach(sendRaw)
+            }
+            held.chunks.forEach { wire.encode(.appendAudio($0)).forEach(sendRaw) }
+            if held.closed { wire.encode(.audioPaused).forEach(sendRaw) }
+            // Enabling live streaming under the same lock keeps new mic packets behind this backlog.
+            s.mayStream = !s.muted && status == .live
+            return hadAudio
         }
-        held.forEach { send(.appendAudio($0)) }
     }
 
     /// Every 5 s: close a session nobody has talked to for `quietClose`, if nothing is speaking or running.
@@ -216,7 +261,7 @@ final class Realtime {
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
         timer.setEventHandler { [weak self] in
-            guard let self, self.status == .live, self.established else { return }
+            guard let self, self.status == .live, self.established, self.provider != .local else { return }
             let quietFor = Date().timeIntervalSince(self.micShared.withLock { $0.lastSpeech })
             guard quietFor > Self.quietClose, !self.responseActive, !self.audio.isSpeaking,
                   self.toolsRunning == 0, self.outbox.isEmpty else { return }
@@ -256,7 +301,7 @@ final class Realtime {
         pendingOutputs.removeAll()
         pendingTexts.removeAll()
         renewWhenIdle = false
-        let task = URLSession.shared.webSocketTask(with: provider.request(key: key))
+        let task = URLSession.shared.webSocketTask(with: requestOverride ?? provider.request(key: key))
         socket = task
         task.resume()
         let handle = wire.capabilities.nativeResumption ? resumeHandle : nil
@@ -276,19 +321,20 @@ final class Realtime {
     private func sessionEstablished() {
         log(hadSession ? "↻ reconnected" : "● connected")
         // Speech held while the session reopened goes first, before live audio starts flowing.
-        flushHeldAudio()
+        let heardDuringHandshake = activateHeldAudio()
         established = true
-        flushHeldAudio() // anything that slipped in meanwhile
         attempts = 0
         // A session resumed with its context (Gemini) already remembers the conversation.
         if hadSession, !resumedWithContext, let context = recap.message {
             send(.userText(context, expectsReply: false))
         }
         hadSession = true
-        if greetNext {
+        if greetNext, !(provider == .local && heardDuringHandshake) {
             greetNext = false
             addReplyText(Greeting.prompt)
             if replies.wantReply() { requestResponse() }
+        } else if provider == .local && heardDuringHandshake {
+            greetNext = false
         }
         guard !outbox.isEmpty else { return }
         outbox.forEach(addReplyText)
@@ -371,7 +417,7 @@ final class Realtime {
 
     private func syncSendGate() {
         let allowed = !muted && status == .live && established
-        mayStream.withLock { $0 = allowed }
+        micShared.withLock { $0.mayStream = allowed }
     }
 
     /// Closes the provider session cleanly so billing stops at once; call before exiting.
@@ -401,7 +447,14 @@ final class Realtime {
         }
         muted.toggle()
         audio.setMuted(muted)
-        if muted { send(.clearInput) }
+        if muted {
+            send(.clearInput)
+            if provider == .local {
+                replies.reset()
+                awaitingCreated = false
+                awaitingReplySince = nil
+            }
+        }
         log(muted ? "🔇 muted" : "🎙  listening")
     }
 
@@ -447,10 +500,8 @@ final class Realtime {
 
     /// Stops local playback and tells the server how much of the reply was actually heard.
     private func cutPlayback() {
-        guard audio.isSpeaking else { return }
-        let item = audio.currentItem
-        let ms = audio.interrupt()
-        send(.truncate(itemID: item, audioEndMs: ms))
+        guard let cut = audio.interrupt() else { return }
+        send(.truncate(itemID: cut.item, audioEndMs: cut.heardMs))
     }
 
     private func receive(_ task: URLSessionWebSocketTask) {
@@ -459,7 +510,6 @@ final class Realtime {
                 guard let self, task === self.socket else { return }
                 switch result {
                 case .success(let message):
-                    if !self.established { self.sessionEstablished() }
                     let text: String? = switch message {
                     case .string(let t): t
                     case .data(let d): WireFrame.text(d) // Gemini sends its JSON as binary frames
@@ -468,6 +518,10 @@ final class Realtime {
                     if let text {
                         let events = self.wire.decode(text)
                         if self.debugEvents { self.logEvents(events) }
+                        if !self.established,
+                           self.provider != .local || events.contains(.sessionReady) {
+                            self.sessionEstablished()
+                        }
                         events.forEach(self.handle)
                     }
                     self.receive(task)
@@ -485,6 +539,8 @@ final class Realtime {
 
     private func handle(_ event: ServerEvent) {
         switch event {
+        case .sessionReady:
+            break
         case .audioDelta(let item, let b64):
             if !droppingAudio { enforce(policy.audio(base64Count: b64.utf8.count)) }
             if !droppingAudio { audio.play(base64: b64, item: item) }
@@ -501,6 +557,11 @@ final class Realtime {
         case .assistantTranscript(let t):
             log("voice: \(t)")
             recap.add("voice", t)
+        case .assistantTranscriptItem(let itemID, let t):
+            log("voice: \(t)")
+            recap.add("voice", t, itemID: itemID)
+        case .assistantTranscriptTruncated(let itemID, let t):
+            recap.replace(itemID: itemID, speaker: "voice", with: t)
         case .userTranscript(let t):
             log("you:   \(t.trimmingCharacters(in: .whitespacesAndNewlines))")
             recap.add("you", t)
@@ -512,7 +573,11 @@ final class Realtime {
             speechOverlappedPlayback = false
             correctedLeak = false
             // The server may already be answering the "stop" itself; cancel that too.
-            if StopCommand.matches(t) { stopSpeech(reason: "you said stop") }
+            if StopCommand.matches(t) {
+                stopSpeech(reason: "you said stop")
+            } else if provider == .local, replies.wantReply() {
+                requestResponse()
+            }
         case .speechStopped:
             if !muted { awaitingReplySince = Date() }
             micShared.withLock { $0.midTurn = false }
@@ -524,10 +589,34 @@ final class Realtime {
             // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest. The provider also
             // hears the voice's own echo and noise as speech, so only cut when this mic heard a loud onset too.
             let heard = !gated || micShared.withLock { Date().timeIntervalSince($0.lastLoud) < Self.bargeInWindow }
-            if heard { cutPlayback() } else if audio.isSpeaking { log("… kept talking: the mic didn't hear you (echo or noise)") }
+            if heard {
+                if provider == .local {
+                    if responseActive { send(.cancelReply) }
+                    replies.reset()
+                    awaitingCreated = false
+                    droppingAudio = audio.isSpeaking
+                }
+                cutPlayback()
+            } else if audio.isSpeaking { log("… kept talking: the mic didn't hear you (echo or noise)") }
         case .functionCall(let callID, let name, let args):
-            runTool(callID: callID, name: name, args: args)
+            runTool(callID: callID, name: name, args: args, epoch: nil)
+        case .localFunctionCall(let epoch, let callID, let name, let args):
+            runTool(callID: callID, name: name, args: args, epoch: epoch)
         case .error(let msg):
+            if provider == .local, !established {
+                log("✖ Local OpenLive handshake failed: \(msg)")
+                let failed = socket
+                socket = nil
+                failed?.cancel(with: .protocolError, reason: nil)
+                keepalive?.cancel()
+                keepalive = nil
+                status = .disconnected
+                providerPreparing = true
+                replies.reset()
+                awaitingCreated = false
+                awaitingReplySince = nil
+                return
+            }
             // A provider ending the session (idle, time limit) is routine: note it and let the close renew it.
             if Reconnect.isSessionEnd(msg) { closeReason = .sessionEnded } else { log("✖ \(msg)") }
             // A refused response.create would otherwise leave the scheduler waiting forever.
@@ -559,8 +648,16 @@ final class Realtime {
     /// Switches to another provider from the orb's menu: the current session closes cleanly (its billing stops),
     /// the new one opens at once and gets the recap, so the conversation carries over. Tool results meant for the
     /// old session are dropped (its calls can't be answered elsewhere); agent reports still arrive in the new one.
-    func switchProvider(to newProvider: Provider, key newKey: String, voice newVoice: String) {
-        guard newProvider != provider else { return }
+    @discardableResult
+    func beginProviderSwitch(to newProvider: Provider, voice newVoice: String) -> Bool {
+        if newProvider == provider {
+            guard provider == .local, status == .disconnected else { return false }
+            connection += 1 // invalidate a retry aimed at the old sidecar port
+            retryPending = false
+            providerPreparing = true
+            requestOverride = nil
+            return true
+        }
         log("⇄ switching to \(newProvider.menuTitle) (voice \(newVoice))")
         if let old = socket {
             socket = nil // its close must not count as a failure
@@ -574,13 +671,35 @@ final class Realtime {
         replies.reset()
         awaitingCreated = false
         provider = newProvider
-        key = newKey
+        providerPreparing = true
+        key = ""
         voice = newVoice
+        requestOverride = nil
+        micShared.withLock {
+            $0.local = newProvider == .local
+            $0.midTurn = false
+            $0.wire = nil
+            $0.held.reset()
+        }
         resumeHandle = nil // resumption handles only mean something to the provider that issued them
         attempts = 0
         dormant = false
         greetNext = true
+        return true
+    }
+
+    func completeProviderSwitch(key newKey: String, request: URLRequest? = nil) {
+        providerPreparing = false
+        key = newKey
+        requestOverride = request
         connect()
+    }
+
+    func switchProvider(to newProvider: Provider, key newKey: String, voice newVoice: String,
+                        request: URLRequest? = nil) {
+        guard newProvider != provider else { return }
+        guard beginProviderSwitch(to: newProvider, voice: newVoice) else { return }
+        completeProviderSwitch(key: newKey, request: request)
     }
 
     /// Replaces the connection before the provider drops it, resuming the same session where supported.
@@ -641,11 +760,17 @@ final class Realtime {
         }
     }
 
-    private func runTool(callID: String, name: String, args: String) {
+    private func runTool(callID: String, name: String, args: String, epoch: Int?) {
+        if let epoch, let local = wire as? LocalWire, !local.isCurrent(epoch: epoch) {
+            addToolOutput(ToolOutput(callID: callID, name: name,
+                                     output: "Cancelled because a newer microphone turn began.", epoch: epoch))
+            return
+        }
         guard deduper.admit(name: name, arguments: args) else {
             log("⤫ \(name) repeated within seconds; not run again")
             addToolOutput(ToolOutput(callID: callID, name: name,
-                                     output: "Duplicate of a call made moments ago; it was not run again. Don't repeat calls."))
+                                     output: "Duplicate of a call made moments ago; it was not run again. Don't repeat calls.",
+                                     epoch: epoch))
             replies.callStarted()
             if replies.callFinished() { requestResponse() }
             return
@@ -667,7 +792,14 @@ final class Realtime {
                 if let pane = outcome.paneWatch { self.watchPane(pane) }
                 // A result for a call from a session that has since closed has nowhere to go.
                 guard self.connection == id, self.status == .live else { return }
-                self.addToolOutput(ToolOutput(callID: callID, name: name, output: outcome.output))
+                if let epoch {
+                    guard let local = self.wire as? LocalWire else { return }
+                    self.addToolOutput(ToolOutput(callID: callID, name: name, output: outcome.output, epoch: epoch))
+                    // The old call may replace its history placeholder, but it cannot schedule a reply in a newer turn.
+                    guard local.isCurrent(epoch: epoch) else { return }
+                } else {
+                    self.addToolOutput(ToolOutput(callID: callID, name: name, output: outcome.output))
+                }
                 // One reply once every call from this turn has answered, not one per call.
                 if self.replies.callFinished() { self.requestResponse() }
             }

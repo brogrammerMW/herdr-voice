@@ -1,0 +1,29 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches-ignore: [main, master]
+jobs:
+  swift:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - run: swift build -c release
+  local-openlive:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.5.2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.22.3, cache: pnpm, cache-dependency-path: local-openlive/pnpm-lock.yaml }
+      - run: ./scripts/local-openlive-source
+      - run: pnpm install --frozen-lockfile
+        working-directory: local-openlive
+      - run: pnpm build # syncs the pinned OpenLive source into vendor/, which check and test import
+        working-directory: local-openlive
+      - run: pnpm check
+        working-directory: local-openlive
+      - run: pnpm test
+        working-directory: local-openlive

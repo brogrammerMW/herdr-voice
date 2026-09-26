@@ -38,11 +38,9 @@ final class Audio {
 
     // Playback is tracked by buffer completion callbacks: the player's sample clock keeps running while idle,
     // so comparing it with queued samples misreports whether anything is audible.
-    private var pendingBuffers = 0
-    private var itemPlayedSamples: Int64 = 0
+    private var playback = PlaybackLedger()
     /// Bumped on interrupt so callbacks from flushed buffers are ignored.
     private var generation = 0
-    private(set) var currentItem = ""
     /// Called on main when playback starts or stops, so Esc can be grabbed and released on the transition
     /// instead of being polled every frame.
     var onSpeakingChanged: ((Bool) -> Void)?
@@ -132,10 +130,6 @@ final class Audio {
     /// Queues one base64 PCM16 chunk of assistant audio.
     func play(base64: String, item: String) {
         guard let data = Data(base64Encoded: base64), !data.isEmpty else { return }
-        if item != currentItem {
-            currentItem = item
-            itemPlayedSamples = 0
-        }
         let frames = data.count / 2
         guard let buf = AVAudioPCMBuffer(pcmFormat: float24k, frameCapacity: AVAudioFrameCount(frames)) else { return }
         buf.frameLength = AVAudioFrameCount(frames)
@@ -144,35 +138,31 @@ final class Audio {
             let s = raw.bindMemory(to: Int16.self)
             for i in 0..<frames { dst[i] = Float(Int16(littleEndian: s[i])) / 32768 }
         }
-        pendingBuffers += 1
-        if pendingBuffers == 1 { onSpeakingChanged?(true) }
+        let wasSpeaking = playback.isSpeaking
+        playback.enqueue(item: item, frames: frames)
+        if !wasSpeaking { onSpeakingChanged?(true) }
         let gen = generation
         player.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self, gen == self.generation else { return }
-                self.pendingBuffers -= 1
-                if self.pendingBuffers == 0 { self.onSpeakingChanged?(false) }
-                if item == self.currentItem { self.itemPlayedSamples += Int64(frames) }
+                self.playback.completed(item: item, frames: frames)
+                if !self.playback.isSpeaking { self.onSpeakingChanged?(false) }
             }
         }
     }
 
     /// Main queue only, like `play` and `interrupt`.
-    var isSpeaking: Bool { pendingBuffers > 0 }
+    var isSpeaking: Bool { playback.isSpeaking }
 
     /// Stops playback and returns how many ms of the current item were heard, for conversation.item.truncate.
-    func interrupt() -> Int {
-        // Granularity is one server chunk (tens of ms), plenty for truncation.
-        let heardMs = Int(itemPlayedSamples * 1000 / Int64(Audio.rate))
+    func interrupt() -> (item: String, heardMs: Int)? {
+        let heard = playback.interrupt(sampleRate: Int(Audio.rate))
         generation += 1
-        let wasSpeaking = pendingBuffers > 0
-        pendingBuffers = 0
-        if wasSpeaking { onSpeakingChanged?(false) }
-        itemPlayedSamples = 0
+        if heard != nil { onSpeakingChanged?(false) }
         player.stop()
         player.play()
         outLevel = 0
-        return heardMs
+        return heard
     }
 
     private func rms(_ p: UnsafePointer<Float>, _ n: Int) -> Float {

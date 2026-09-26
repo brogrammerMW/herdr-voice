@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+binary="${repo_root}/.build/release/herdr-voice"
+test -x "${binary}" || { echo "Build first with: swift build -c release" >&2; exit 1; }
+export HERDR_VOICE_LOCAL_OPENLIVE_DIR="${repo_root}/local-openlive"
+cd "${repo_root}"
+exec "${binary}" --here --provider local "$@"

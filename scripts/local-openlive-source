@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+upstream=${HERDR_OPENLIVE_UPSTREAM:-"${HOME}/.local/share/herdr-openlive/upstream"}
+pin=$(node -p "require('${repo_root}/local-openlive/UPSTREAM.json').commit")
+repository=$(node -p "require('${repo_root}/local-openlive/UPSTREAM.json').repository")
+
+if [ ! -d "${upstream}/.git" ]; then
+  mkdir -p "$(dirname -- "${upstream}")"
+  git clone --filter=blob:none --no-checkout "${repository}" "${upstream}"
+fi
+if [ -n "$(git -C "${upstream}" status --porcelain)" ]; then
+  echo "OpenLive source has local changes; refusing to change it: ${upstream}" >&2
+  exit 1
+fi
+if [ "$(git -C "${upstream}" rev-parse HEAD 2>/dev/null || true)" != "${pin}" ]; then
+  git -C "${upstream}" fetch --depth 1 origin "${pin}"
+  git -C "${upstream}" checkout --detach "${pin}"
+fi
+printf '%s\n' "OpenLive source ready at ${pin}"
