@@ -219,7 +219,9 @@ func voicePaneChoice() -> Orb.MenuChoice? {
 }
 
 func modelChoices() -> [Orb.MenuChoice] {
-    (voicePaneChoice().map { [$0] } ?? []) + ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
+    let models = ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil },
+                                   localIsBuilt: LocalRuntime.isBuilt(environment: env))
+    return (voicePaneChoice().map { [$0] } ?? []) + models.map { entry in
         Orb.MenuChoice(title: entry.title, checked: entry.checked, enabled: entry.enabled) {
             let voice = entry.provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"])
             if entry.provider == .local {

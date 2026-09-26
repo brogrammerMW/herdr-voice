@@ -111,7 +111,8 @@ Then, in any Herdr pane:
    `herdr-voice --provider gemini` starts it with another model; `herdr-voice --here` runs it in the current pane.
 3. **Use the orb:** **click** it to mute or unmute your mic (it turns grey while muted; you still hear the voice).
    **Right-click** it for a menu to **Show voice pane** (or **Hide voice pane**), switch the AI model (**Local OpenLive**,
-   **Grok**, **GPT** or **Gemini**) or **Quit herdr-voice**.
+   **Grok**, **GPT** or **Gemini**) or **Quit herdr-voice**. **Local OpenLive (not set up)** is greyed out until
+   `scripts/local-openlive-setup` has built it.
    Switching keeps the conversation going with the new model. To change the voice itself (Rex, Eve, ...), set
    `HERDR_VOICE_VOICE` in the settings file below.
 
@@ -640,7 +641,7 @@ delta, the process scan (0.4 ms every 2 s), and `herdr` CLI calls (under 10 ms e
 | `✖ audio: ...` on start | Allow microphone access for your terminal in System Settings → Privacy & Security → Microphone, then restart |
 | `no API key for grok` | Run `herdr-voice setup grok` in a terminal (or set `XAI_API_KEY`) |
 | `herdr-voice: command not found` | Add `~/.local/bin` to your `PATH` (see [Quick start](#quick-start)), or run `.build/release/herdr-voice` from the clone |
-| A model is greyed out in the orb's menu | It has no key yet: `herdr-voice setup openai` or `herdr-voice setup gemini` in another terminal; the menu picks it up next time you open it |
+| A model is greyed out in the orb's menu | Local OpenLive isn't set up yet: run `scripts/local-openlive-setup`. Any other model has no key yet: `herdr-voice setup openai` or `herdr-voice setup gemini` in another terminal; the menu picks it up next time you open it |
 | `⚠ could not register ⌥⌘M` | Another app owns that shortcut. Set `HERDR_VOICE_HOTKEY_KEYCODE`, or click the orb to mute |
 | `↻ …reconnecting` in the log | Normal: the session ended (idle or time limit) or the network dropped; it reconnects by itself (1 → 30 s backoff) |
 | `✖ …gave up after 8 tries` / red orb | Repeated failures, usually a wrong or revoked key or no network. Fix that, then press `⌥⌘M` |
