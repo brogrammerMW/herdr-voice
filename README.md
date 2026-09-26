@@ -44,7 +44,7 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   approval, the voice interrupts with a one- or two-sentence summary.
 - **Live orb, pinned to Herdr.** An orb sits in the bottom-left of the terminal window running Herdr and follows it
   around, staying visible even when you click into another app. Colour blobs drift inside it; your voice pushes them outward,
-  the assistant's voice lights a pulsing core. Click it to mute.
+  the assistant's voice lights a pulsing core. Click it to mute; right-click it to switch models or quit.
 - **Optional shell access.** Turn on `run_shell` and the voice can run quick commands for you ("what branch is
   forge on?"), each one only after you approve it out loud.
 - **Summaries only, enforced.** Replies are one or two sentences with no code, paths, file names, URLs or diffs read
@@ -84,11 +84,12 @@ Then, in any Herdr pane:
 2. **Start the voice:** `herdr-voice`. It opens in a pane below the one you typed in, and your shell stays free.
    Allow microphone access when macOS asks. Stop it with `herdr-voice stop` or by closing its pane.
    `herdr-voice --provider gemini` starts it with another model; `herdr-voice --here` runs it in the current pane.
+3. **Use the orb:** **click** it to mute or unmute your mic (it turns grey while muted; you still hear the voice).
+   **Right-click** it for a menu to switch the AI model (**Grok**, **GPT** or **Gemini**) or **Quit herdr-voice**.
+   Switching keeps the conversation going with the new model. To change the voice itself (Rex, Eve, ...), set
+   `HERDR_VOICE_VOICE` in the settings file below.
 
-If your shell says `herdr-voice: command not found`, `~/.local/bin` isn't on your `PATH`: add
-`export PATH="$HOME/.local/bin:$PATH"` to your `~/.zshrc`.
-
-3. **Give it a key** (optional), in Herdr's `config.toml`:
+4. **Give it a key** (optional), in Herdr's `config.toml`:
 
    ```toml
    [[keys.command]]
@@ -97,6 +98,9 @@ If your shell says `herdr-voice: command not found`, `~/.local/bin` isn't on you
    command = "brogrammermw.herdr-voice.start"
    description = "start herdr-voice"
    ```
+
+If your shell says `herdr-voice: command not found`, `~/.local/bin` isn't on your `PATH`: add
+`export PATH="$HOME/.local/bin:$PATH"` to your `~/.zshrc`.
 
 **Settings** live in `config.env` in the plugin's config folder (`herdr plugin config-dir brogrammermw.herdr-voice`),
 created on first start with every option commented out. It takes the `HERDR_VOICE_*` settings from
@@ -235,7 +239,7 @@ thing, the voice asks which one you mean instead of guessing.
 | Control | Action |
 |---|---|
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
-| Right-click (or control-click) the orb | Menu: switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out) or **Quit herdr-voice**, which closes the provider session and exits |
+| Right-click (or control-click) the orb | Menu: switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out), which carries the conversation over to the new model, or **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
 | Talk over the voice | Stop it and listen to you (only when your mic actually heard you, so echo and noise don't cut it off) |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |
