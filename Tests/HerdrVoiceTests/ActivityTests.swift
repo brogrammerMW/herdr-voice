@@ -25,3 +25,28 @@ private func thinking(awaiting: TimeInterval? = nil, response: Bool = false, spe
     #expect(!thinking(response: true, dropping: true))   // you stopped it
     #expect(!thinking(awaiting: Activity.replyTimeout + 1)) // no reply came; don't spin forever
 }
+
+private func mood(loading: Bool = false, disconnected: Bool = false, dormant: Bool = false, muted: Bool = false,
+                  speaking: Bool = false, agents: Bool = false, quiet: Bool = true) -> Mood {
+    Activity.mood(loading: loading, disconnected: disconnected, dormant: dormant, muted: muted, speaking: speaking,
+                  agentsWorking: agents, micQuiet: quiet)
+}
+
+@Test func loadingLocalModelsIsWorkNotAFailure() {
+    #expect(mood(loading: true, disconnected: true) == .working)
+    #expect(mood(disconnected: true) == .offline)                 // a real failure stays red
+    #expect(mood(loading: true, disconnected: true, muted: true) == .muted)
+}
+
+@Test func deliberateSilenceIsNotOffline() {
+    #expect(mood(disconnected: true, muted: true) == .muted)
+    #expect(mood(disconnected: true, dormant: true) == .listening)
+    #expect(mood(muted: true, speaking: true) == .speaking)
+}
+
+@Test func liveMoods() {
+    #expect(mood() == .listening)
+    #expect(mood(speaking: true) == .speaking)
+    #expect(mood(agents: true) == .working)
+    #expect(mood(agents: true, quiet: false) == .listening)
+}

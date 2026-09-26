@@ -140,6 +140,8 @@ final class Realtime {
         self.key = key
         self.voice = voice
         self.requestOverride = request
+        // Local with no runtime yet: stay closed until completeProviderSwitch brings the loaded runtime's request.
+        self.providerPreparing = provider == .local && request == nil
         self.wire = provider.makeWire()
         gate.policy = provider == .local ? .local : .cloud
         micShared.withLock { $0.local = provider == .local }
@@ -148,7 +150,7 @@ final class Realtime {
 
     func start() throws {
         try audio.start()
-        connect()
+        if !providerPreparing { connect() }
         if gated { startQuietTimer() }
     }
 
