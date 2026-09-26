@@ -16,9 +16,8 @@ function fixture() {
 }
 
 describe("local state directory", () => {
-  it("prefers HERDR_PLUGIN_STATE_DIR and falls back to ~/.local/state/herdr-voice", () => {
-    expect(defaultStateDir({ HERDR_PLUGIN_STATE_DIR: "/s" }, "/h")).toBe("/s/local-openlive");
-    expect(defaultStateDir({}, "/h")).toBe("/h/.local/state/herdr-voice/local-openlive");
+  it("is one fixed directory under ~/.local/state/herdr-voice", () => {
+    expect(defaultStateDir("/h")).toBe("/h/.local/state/herdr-voice/local-openlive");
   });
 
   it("rejects a relative or missing boot stateDir", () => {

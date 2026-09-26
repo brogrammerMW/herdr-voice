@@ -35,7 +35,7 @@ final class LocalRuntime {
             throw RuntimeError.missing("Local OpenLive is not built. Run scripts/local-openlive-setup first.")
         }
         let token = try randomToken()
-        let state = LocalState.directory(environment: environment)
+        let state = LocalState.directory()
         var boot: [String: Any] = ["token": token, "stateDir": state.path, "setup": setup, "brain": try brain(environment)]
         if !setup { boot.removeValue(forKey: "setup") }
         let bootData = try JSONSerialization.data(withJSONObject: boot)
@@ -139,7 +139,7 @@ final class LocalRuntime {
         let files = FileManager.default
         return files.isExecutableFile(atPath: root.appendingPathComponent("node_modules/.bin/electron").path)
             && files.fileExists(atPath: root.appendingPathComponent("dist/main.mjs").path)
-            && files.fileExists(atPath: LocalState.inventory(in: LocalState.directory(environment: environment)).path)
+            && files.fileExists(atPath: LocalState.inventory(in: LocalState.directory()).path)
     }
 
     private func verifyInventory(_ readiness: [String: Any], state: URL) throws {
@@ -153,7 +153,7 @@ final class LocalRuntime {
               expected["digest"] as? String == actual["digest"] as? String
         else {
             throw RuntimeError.failed("Local OpenLive model cache in \(state.path) does not match its setup inventory. "
-                + "Run scripts/local-openlive-setup with the same HERDR_PLUGIN_STATE_DIR (unset means ~/.local/state/herdr-voice).")
+                + "Run scripts/local-openlive-setup.")
         }
     }
 

@@ -1,14 +1,15 @@
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 export const PARTITION = "herdr-local-openlive-v1";
 export const INVENTORY_FILE = "model-inventory.json";
 const LEGACY_INVENTORY_FILE = ".local-model-inventory.json";
 
-// Same rule as Swift's LocalState and scripts/state-dir.mjs: HERDR_PLUGIN_STATE_DIR, else ~/.local/state/herdr-voice.
-export function defaultStateDir(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  return join(resolve(env.HERDR_PLUGIN_STATE_DIR || join(home, ".local/state/herdr-voice")), "local-openlive");
+// Same fixed path as Swift's LocalState and scripts/state-dir.mjs. HERDR_PLUGIN_STATE_DIR is ignored on purpose:
+// setup runs from a plain terminal, and it must agree with the plugin pane.
+export function defaultStateDir(home = homedir()): string {
+  return join(home, ".local/state/herdr-voice/local-openlive");
 }
 
 // Paths under the state directory Swift passes in the boot JSON. It lives outside the plugin folder, which

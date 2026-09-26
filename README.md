@@ -76,7 +76,7 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 ## Local OpenLive quick start
 
 Local mode needs a one-time setup from a source checkout, because it includes Electron and large browser model assets.
-Until setup has finished, **Local OpenLive** appears greyed out in the orb's menu. You need Node 22 or later and pnpm 10
+Until setup has finished, the menu shows **Local OpenLive (not set up)**, greyed out. You need Node 22 or later and pnpm 10
 or later; the lockfile stays exact either way.
 
 ```bash
@@ -91,8 +91,8 @@ proves a strict-offline speech restart with real STT and TTS calls. The script a
 when needed and verifies the exact model with a bounded local inference call. The app connects to Ollama only on loopback.
 
 The model cache and its inventory live in a state directory outside the plugin folder, so they survive
-`herdr plugin install` updates. That directory is `$HERDR_PLUGIN_STATE_DIR/local-openlive` when Herdr sets that
-variable, otherwise `~/.local/state/herdr-voice/local-openlive`. The source and npm dependencies are pinned, while the
+`herdr plugin install` updates. That directory is always `~/.local/state/herdr-voice/local-openlive`, whether setup
+runs from a terminal or the voice runs in the plugin pane. The source and npm dependencies are pinned, while the
 model cache is inventoried and hashed at setup rather than checked into this repository. Full operating instructions,
 hybrid keyed-brain settings, failure behavior, demos, tool examples and benchmark limits are in
 [docs/local-openlive.md](docs/local-openlive.md).
