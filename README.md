@@ -31,13 +31,15 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 
 - **Hands-free voice chat.** The mic stays open, with macOS echo cancellation so it works on speakers too. Talk
   naturally, and interrupt the voice any time by talking over it. Its own echo or background noise doesn't count as
-  an interruption.
+  an interruption. It introduces itself when it starts, then waits for you.
 - **Drives your Herdr agents.** It lists the agents in your session, sends them work, reads what they are doing,
   answers their approval prompts when you say so, and switches your view to a workspace, tab or agent.
-- **Runs your Herdr layout.** Create, list, rename and close workspaces (spaces) and tabs, and create, open, list
-  and remove git worktrees, all by voice. New things open in the background unless you ask to switch to them.
+- **Runs your Herdr layout.** Create, list, rename and close workspaces (spaces) and tabs; create, open, list
+  and remove git worktrees; split panes right or down, and zoom, resize, swap, move, rename or close them, all by
+  voice. New things open in the background unless you ask to switch to them.
 - **Starts agents where you need them.** "Make a worktree for fix login and start Claude in it" creates the branch,
   the worktree and its workspace, starts Claude Code or Codex there, and hands it your first instruction if you gave one.
+  "Start Codex to the right of claude-2" splits that pane and starts it next door.
 - **Watches any pane.** Not just agents: ask "is the dev server up?" and it reads that pane, or "tell me when the
   build prints done" and it speaks up when it does.
 - **Never blocks on the agent.** Work is sent and the conversation carries on; when the agent finishes or asks for
@@ -522,7 +524,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 146 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 147 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
