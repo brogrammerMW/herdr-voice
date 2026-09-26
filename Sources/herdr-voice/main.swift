@@ -214,6 +214,10 @@ func loadLocal(onFailure: @escaping (Error) -> Void) {
         }
     }
 }
+// A lost local connection means the helper crashed: relaunch it, backing off like any failed reconnect.
+session.relaunchLocalHelper = {
+    loadLocal { session.localRelaunchFailed("Local OpenLive relaunch failed: \($0.localizedDescription)") }
+}
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
 /// "Show voice pane" while it's hidden behind the pane it opened next to, "Hide voice pane" while it's in view. Only when
 /// herdr-voice runs in a Herdr pane.

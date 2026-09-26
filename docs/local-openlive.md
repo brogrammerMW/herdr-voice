@@ -25,6 +25,10 @@ exact-model brain probe. The first run downloads the model files. `local-openliv
 and repeats the inference probes. A missing asset, WebGPU failure, non-finite or silent TTS, Ollama failure, or schema
 mismatch stops startup. The runtime has no CPU, cloud, ACP, or reduced-tool fallback.
 
+If the Electron child crashes mid-session, herdr-voice relaunches it and reconnects to its new port, with the
+conversation recap, in about 5 s on a warm model cache. A helper that keeps failing backs off like any lost connection
+(1, 2, 4 … 30 s) and gives up after 8 tries; ⌥⌘M or choosing Local from the orb then tries again.
+
 This version uses Electron's persistent Cache API for speech assets. Setup writes the verified URL, size, and SHA-256
 inventory to the untracked, mode-0600 file `local-openlive/.local-model-inventory.json`. Runtime compares the aggregate
 count, bytes, and digest with that file. It also performs real inference before it says ready. The OpenLive source and
