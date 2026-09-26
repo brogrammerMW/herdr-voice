@@ -13,8 +13,10 @@ public enum HerdrTools {
     public static var schemas: [[String: Any]] { schemas(includeShell: shellEnabled) }
 
     public static func schemas(includeShell: Bool) -> [[String: Any]] {
-        herdrSchemas + manageSchemas + [startAgentSchema] + paneSchemas + [splitPaneSchema] + paneControlSchemas
-            + (includeShell ? [shellSchema, runInPaneSchema] : [])
+        // Typed groups joined, not one long `+` chain: CI's compiler timed out type-checking that.
+        let groups: [[[String: Any]]] = [herdrSchemas, manageSchemas, [startAgentSchema], paneSchemas, [splitPaneSchema],
+                                         paneControlSchemas, includeShell ? [shellSchema, runInPaneSchema] : []]
+        return Array(groups.joined())
     }
 
     static let herdrSchemas: [[String: Any]] = [

@@ -8,7 +8,7 @@ repository=$(node -p "require('${repo_root}/local-openlive/UPSTREAM.json').repos
 
 if [ ! -d "${upstream}/.git" ]; then
   mkdir -p "$(dirname -- "${upstream}")"
-  git clone --filter=blob:none --no-checkout "${repository}" "${upstream}"
+  git clone --filter=blob:none "${repository}" "${upstream}"
 fi
 if [ -n "$(git -C "${upstream}" status --porcelain)" ]; then
   echo "OpenLive source has local changes; refusing to change it: ${upstream}" >&2
