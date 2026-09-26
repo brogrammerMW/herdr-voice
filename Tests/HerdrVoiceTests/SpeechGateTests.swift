@@ -143,3 +143,22 @@ private let quiet: Float = 0.0003, speech: Float = 0.05
     #expect(feed(&g, 1, speech, from: &i).isEmpty)
     #expect(g.noiseFloor > 0)
 }
+
+// Measured on a MacBook's speakers with echo cancellation: the voice's own echo opened the gate at 3–13% of the
+// playback level and cut every reply short (#82).
+@Test func echoOfTheVoiceDoesNotCountAsSpeech() {
+    #expect(EchoGuard.level(0.0189, playback: 0.1507, floor: 0.0001) == 0.0001)
+    #expect(EchoGuard.level(0.0044, playback: 0.1453, floor: 0.0001) == 0.0001)
+}
+
+@Test func talkingOverTheVoiceStillCounts() {
+    #expect(EchoGuard.level(0.08, playback: 0.15, floor: 0.0001) == 0.08)
+    #expect(EchoGuard.level(0.0134, playback: 0, floor: 0.0001) == 0.0134) // nothing playing: unchanged
+}
+
+@Test func theEchoRatioIsTunablePerMachine() {
+    #expect(EchoGuard.ratio(environment: [:]) == EchoGuard.defaultRatio)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "0.5"]) == 0.5)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "nope"]) == EchoGuard.defaultRatio)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "-1"]) == EchoGuard.defaultRatio)
+}

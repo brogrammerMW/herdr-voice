@@ -107,6 +107,7 @@ final class Realtime {
         overrideThreshold: ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_THRESHOLD"].flatMap(Float.init))
     /// HERDR_VOICE_GATE_DEBUG=1: log gate openings/closings and a level meter every 5 s, to tune any mic.
     private let gateDebug = ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_DEBUG"] == "1"
+    private let echoRatio = EchoGuard.ratio(environment: ProcessInfo.processInfo.environment)
     private var meterPeak: Float = 0
     private var meterChunks = 0
     /// Shared between the mic queue and main.
@@ -162,12 +163,14 @@ final class Realtime {
             return
         }
         let wasOpen = gate.isOpen
+        let rawLevel = level
+        let level = local ? EchoGuard.level(level, playback: audio.outLevel, floor: gate.noiseFloor, ratio: echoRatio) : level
         if gated && level > gate.openThreshold { micShared.withLock { $0.lastLoud = Date() } }
         let useGate = gated || local
         let chunks = useGate ? gate.process(b64, level: level, holdOpen: local ? false : midTurn) : [b64]
         let opened = gate.isOpen && !wasOpen
         let closed = wasOpen && !gate.isOpen
-        if gateDebug && useGate { debugMeter(level: level, opened: opened, closed: closed) }
+        if gateDebug && useGate { debugMeter(level: rawLevel, opened: opened, closed: closed) }
         guard !chunks.isEmpty else { return }
         let stream = { [weak self] (wire: Wire, local: Bool) in
             guard let self else { return }
@@ -216,7 +219,8 @@ final class Realtime {
     private func debugMeter(level: Float, opened: Bool, closed: Bool) {
         let floor = gate.noiseFloor, open = gate.openThreshold
         if opened || closed {
-            let line = String(format: "🎚  gate %@  level %.4f  floor %.4f  open at %.4f", opened ? "OPEN " : "close", level, floor, open)
+            let line = String(format: "🎚  gate %@  level %.4f  floor %.4f  open at %.4f  playback %.4f",
+                              opened ? "OPEN " : "close", level, floor, open, audio.outLevel)
             DispatchQueue.main.async { log(line) }
         }
         meterPeak = max(meterPeak, level)
