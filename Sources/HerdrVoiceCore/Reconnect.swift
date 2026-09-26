@@ -22,6 +22,12 @@ public enum Reconnect {
         return min(30, pow(2, Double(attempt)))
     }
 
+    /// Local mode dials one Electron helper's loopback port. Once that connection is lost the helper (or its socket)
+    /// is gone, so the next attempt relaunches the helper for a fresh port instead of redialing the dead one.
+    public static func relaunchesHelper(provider: Provider, connectionLost: Bool) -> Bool {
+        provider == .local && connectionLost
+    }
+
     /// Whether a server error message announces a routine session end (idle timeout or maximum duration)
     /// rather than a real failure.
     public static func isSessionEnd(_ message: String) -> Bool {

@@ -5,6 +5,16 @@ import Testing
     #expect(Reconnect.delay(reason: .sessionEnded, attempt: 0, muted: false) == 0)
 }
 
+@Test func aLostLocalConnectionRelaunchesTheHelper() {
+    #expect(Reconnect.relaunchesHelper(provider: .local, connectionLost: true))
+    #expect(!Reconnect.relaunchesHelper(provider: .local, connectionLost: false)) // a fresh port is dialed as is
+}
+
+@Test("cloud reconnects never relaunch the local helper", arguments: [Provider.grok, .openai, .gemini])
+func cloudReconnectsDoNotRelaunch(provider: Provider) {
+    #expect(!Reconnect.relaunchesHelper(provider: provider, connectionLost: true))
+}
+
 @Test func recapTruncatesTheMatchingPlaybackItem() {
     var recap = Recap()
     recap.add("voice", "first answer", itemID: "first")

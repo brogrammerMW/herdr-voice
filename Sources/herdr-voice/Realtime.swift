@@ -133,6 +133,11 @@ final class Realtime {
     /// A reconnect is already scheduled by the backoff.
     private var retryPending = false
     private(set) var providerPreparing = false
+    /// Local mode: the helper's connection was lost, so its port is dead and the next connect relaunches it.
+    private var connectionLost = false
+    /// Relaunches the Local OpenLive helper off the main queue, then calls completeProviderSwitch with its new port,
+    /// or localRelaunchFailed.
+    var relaunchLocalHelper: (() -> Void)?
     private var quietTimer: DispatchSourceTimer?
 
     init(provider: Provider, key: String, voice: String, request: URLRequest? = nil) {
@@ -297,8 +302,16 @@ final class Realtime {
     }
 
     func connect() {
+        guard !providerPreparing else { return }
         retryPending = false
         dormant = false
+        if Reconnect.relaunchesHelper(provider: provider, connectionLost: connectionLost), let relaunchLocalHelper {
+            connectionLost = false
+            providerPreparing = true
+            requestOverride = nil
+            log("↻ relaunching Local OpenLive")
+            return relaunchLocalHelper()
+        }
         micShared.withLock { $0.midTurn = false }
         connection += 1
         established = false
@@ -365,12 +378,25 @@ final class Realtime {
             attempts += 1
             resumeHandle = nil // if a resumption was refused, the next attempt starts a fresh session
         }
+        connectionLost = true
         // The provider closed a quiet session: nothing to reconnect for until someone speaks.
         if gated && reason == .sessionEnded && !muted {
             dormant = true
             log("💤 \(detail); reopens when you speak")
             return
         }
+        scheduleRetry(reason: reason, detail: detail)
+    }
+
+    /// The helper relaunch failed: counts as a failed attempt and backs off like a drop.
+    func localRelaunchFailed(_ detail: String) {
+        providerPreparing = false
+        connectionLost = true
+        attempts += 1
+        scheduleRetry(reason: .dropped, detail: detail)
+    }
+
+    private func scheduleRetry(reason: Reconnect.Reason, detail: String) {
         guard let delay = Reconnect.delay(reason: reason, attempt: attempts, muted: muted) else {
             log(muted ? "… \(detail); reconnects when you unmute"
                       : "✖ \(detail); gave up after \(attempts) tries, press \(Hotkey.label) to reconnect")
@@ -701,6 +727,7 @@ final class Realtime {
 
     func completeProviderSwitch(key newKey: String, request: URLRequest? = nil) {
         providerPreparing = false
+        connectionLost = false
         key = newKey
         requestOverride = request
         connect()
