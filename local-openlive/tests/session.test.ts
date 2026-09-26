@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BridgeSession, type BridgeDependencies, type WireMessage } from "../src/session.js";
+import { BridgeSession, heardSentences, type BridgeDependencies, type WireMessage } from "../src/session.js";
 
 const tools = [
   { name: "list_agents", description: "List agents", parameters: { type: "object", properties: {} } },
@@ -220,9 +220,9 @@ describe("BridgeSession", () => {
     await session.handle({ type: "conversation.text", epoch: 0, text: "two", expects_reply: true });
     await session.handle({ type: "response.create", epoch: 0 });
     await session.handle({ type: "response.truncate", epoch: 0, item_id: firstItem, audio_end_ms: 0 });
+    // Nothing of the first reply was heard and it called no tool: it leaves the history entirely.
     const assistants = session.history.filter((message) => message.role === "assistant");
-    expect(assistants[0]).toMatchObject({ text: undefined });
-    expect(assistants[1]).toMatchObject({ text: "Second complete response stays intact." });
+    expect(assistants).toEqual([{ role: "assistant", text: "Second complete response stays intact." }]);
   });
 
   it("trims only complete history groups so tool results are never orphaned", async () => {
@@ -392,5 +392,16 @@ describe("smooth local speech", () => {
     await session.handle({ type: "conversation.text", epoch: 0, text: "hi", expects_reply: true });
     await session.handle({ type: "response.create", epoch: 0 });
     expect(events.some((e) => e.type === "response.audio.delta")).toBe(true);
+  });
+});
+
+describe("interrupted replies in the history", () => {
+  // A live session filled the history with replies cut mid-sentence ("I'm ready to help. Would"); Qwen then
+  // copied that and ended 2 of 6 replies mid-sentence, against 0 of 6 with the same history in full sentences.
+  it("keeps only the complete sentences the user heard", () => {
+    expect(heardSentences("Yes, I'm ready to help. Would")).toBe("Yes, I'm ready to help.");
+    expect(heardSentences("I've started a new agent in the \"herdr")).toBe("");
+    expect(heardSentences("Done! It passed. Next I'll")).toBe("Done! It passed.");
+    expect(heardSentences("Is that it? Yes.")).toBe("Is that it? Yes.");
   });
 });

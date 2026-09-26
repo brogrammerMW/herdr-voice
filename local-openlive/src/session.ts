@@ -347,8 +347,15 @@ export class BridgeSession {
     const record = this.spoken.get(item);
     if (!record) return;
     const heard = record.chunks.filter((chunk) => chunk.endMs <= Math.max(0, heardMs));
-    const text = heard.map((chunk) => chunk.text).join(" ");
-    if (record.message) record.message.text = text || undefined;
+    // Speech chunks can end mid-sentence; a small model copies half-sentences it finds in its own history.
+    const text = heardSentences(heard.map((chunk) => chunk.text).join(" "));
+    if (record.message) {
+      record.message.text = text || undefined;
+      if (!text && !record.message.toolCalls?.length) {
+        const index = this.history.indexOf(record.message);
+        if (index >= 0) this.history.splice(index, 1);
+      }
+    }
     record.chunks = heard;
     if (item === this.responseItem) this.cancel();
     this.deps.emit({ type: "response.transcript.truncated", epoch: this.epoch, item_id: item, transcript: text });
@@ -392,6 +399,11 @@ function requiredID(value: string): string {
 function boundedText(value: string): string {
   if (typeof value !== "string" || value.length > 1_000_000) throw new Error("text too large");
   return value;
+}
+
+/** The complete sentences of `text`, dropping a trailing fragment ("I'm ready to help. Would"). */
+export function heardSentences(text: string): string {
+  return /^[\s\S]*[.!?]["'”’)\]]*(?=\s|$)/.exec(text.trim())?.[0].trim() ?? "";
 }
 
 /** Kokoro pads every sentence with ~400 ms of silence at each end, which played as 800 ms gaps between

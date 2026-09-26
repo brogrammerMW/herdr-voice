@@ -108,6 +108,8 @@ final class Realtime {
     /// HERDR_VOICE_GATE_DEBUG=1: log gate openings/closings and a level meter every 5 s, to tune any mic.
     private let gateDebug = ProcessInfo.processInfo.environment["HERDR_VOICE_GATE_DEBUG"] == "1"
     private let echoRatio = EchoGuard.ratio(environment: ProcessInfo.processInfo.environment)
+    /// Mic queue only.
+    private var echoReference: Float = 0
     private var meterPeak: Float = 0
     private var meterChunks = 0
     /// Shared between the mic queue and main.
@@ -164,7 +166,8 @@ final class Realtime {
         }
         let wasOpen = gate.isOpen
         let rawLevel = level
-        let level = local ? EchoGuard.level(level, playback: audio.outLevel, floor: gate.noiseFloor, ratio: echoRatio) : level
+        echoReference = EchoGuard.reference(previous: echoReference, playback: audio.outLevel)
+        let level = local ? EchoGuard.level(level, playback: echoReference, floor: gate.noiseFloor, ratio: echoRatio) : level
         if gated && level > gate.openThreshold { micShared.withLock { $0.lastLoud = Date() } }
         let useGate = gated || local
         let chunks = useGate ? gate.process(b64, level: level, holdOpen: local ? false : midTurn) : [b64]

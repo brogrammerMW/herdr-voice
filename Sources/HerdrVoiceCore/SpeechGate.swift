@@ -138,6 +138,12 @@ public enum EchoGuard {
         return value
     }
 
+    /// The playback level to guard against, per 20 ms chunk: echo and room reverb outlast a drop in playback, so it
+    /// fades (about 60 dB over 0.8 s) instead of following playback down.
+    public static func reference(previous: Float, playback: Float) -> Float {
+        max(playback, previous * 0.85)
+    }
+
     public static func level(_ level: Float, playback: Float, floor: Float, ratio: Float = defaultRatio) -> Float {
         level < playback * ratio ? min(level, floor) : level
     }

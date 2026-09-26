@@ -181,3 +181,14 @@ private let quiet: Float = 0.0003, speech: Float = 0.05
     _ = feed(&g, SpeechGate<Int>.maxHoldChunks + 10, speech, from: &i)
     #expect(!g.isOpen)
 }
+
+// Live test: the gate opened at 0.0030 while the voice's playback had dropped to 0.0116 at the soft end of a word;
+// the room still echoed the louder audio from just before. The echo reference fades instead of dropping at once.
+@Test func theEchoReferenceFadesRatherThanDroppingWithPlayback() {
+    var reference: Float = 0
+    reference = EchoGuard.reference(previous: reference, playback: 0.15)
+    for _ in 0..<5 { reference = EchoGuard.reference(previous: reference, playback: 0.0116) } // 100 ms later
+    #expect(EchoGuard.level(0.0030, playback: reference, floor: 0.0001) == 0.0001)
+    for _ in 0..<60 { reference = EchoGuard.reference(previous: reference, playback: 0) } // 1.2 s of silence
+    #expect(EchoGuard.level(0.0030, playback: reference, floor: 0.0001) == 0.0030)
+}
