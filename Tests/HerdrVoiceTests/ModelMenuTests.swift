@@ -2,17 +2,25 @@ import Testing
 @testable import HerdrVoiceCore
 
 @Test func menuListsLocalGrokGPTGeminiWithTheCurrentOneChecked() {
-    let entries = ModelMenu.entries(current: .gemini, hasKey: { _ in true })
+    let entries = ModelMenu.entries(current: .gemini, hasKey: { _ in true }, localIsBuilt: true)
     #expect(entries.map(\.title) == ["Local OpenLive", "Grok", "GPT", "Gemini"])
     #expect(entries.map(\.checked) == [false, false, false, true])
     #expect(entries.allSatisfy { $0.enabled })
 }
 
 @Test func modelsWithoutAKeyAreShownButDisabled() {
-    let entries = ModelMenu.entries(current: .grok, hasKey: { $0 != .openai })
+    let entries = ModelMenu.entries(current: .grok, hasKey: { $0 != .openai }, localIsBuilt: true)
     #expect(entries[0] == ModelMenu.Entry(provider: .local, title: "Local OpenLive", checked: false, enabled: true))
     #expect(entries[2] == ModelMenu.Entry(provider: .openai, title: "GPT (no key)", checked: false, enabled: false))
     #expect(entries[1].enabled && entries[3].enabled)
+}
+
+@Test func localOpenLiveIsShownButDisabledUntilSetUp() {
+    let built = ModelMenu.entries(current: .grok, hasKey: { _ in true }, localIsBuilt: true)
+    let unbuilt = ModelMenu.entries(current: .grok, hasKey: { _ in true }, localIsBuilt: false)
+    #expect(unbuilt[0] == ModelMenu.Entry(provider: .local, title: "Local OpenLive (not set up)", checked: false, enabled: false))
+    #expect(Array(unbuilt.dropFirst()) == Array(built.dropFirst()))
+    #expect(unbuilt.dropFirst().allSatisfy { $0.enabled })
 }
 
 @Test func localProviderNeedsNoAPIKey() {

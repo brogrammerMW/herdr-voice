@@ -28,7 +28,7 @@ final class LocalRuntime {
     func prepare(environment: [String: String] = ProcessInfo.processInfo.environment,
                  setup: Bool = false) throws -> Ready {
         let operation = beginPreparation()
-        let root = try runtimeRoot(environment: environment)
+        let root = try Self.runtimeRoot(environment: environment)
         let electron = root.appendingPathComponent("node_modules/.bin/electron").path
         let main = root.appendingPathComponent("dist/main.mjs").path
         guard FileManager.default.isExecutableFile(atPath: electron), FileManager.default.fileExists(atPath: main) else {
@@ -132,6 +132,15 @@ final class LocalRuntime {
         return Ready(request: request, label: label, probe: object["probe"] as? [String: Any] ?? [:])
     }
 
+    /// Whether setup has run: Electron, the built main and the model inventory exist. Only stats files.
+    static func isBuilt(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard let root = try? runtimeRoot(environment: environment) else { return false }
+        let files = FileManager.default
+        return files.isExecutableFile(atPath: root.appendingPathComponent("node_modules/.bin/electron").path)
+            && files.fileExists(atPath: root.appendingPathComponent("dist/main.mjs").path)
+            && files.fileExists(atPath: root.appendingPathComponent(".local-model-inventory.json").path)
+    }
+
     private func verifyInventory(_ readiness: [String: Any], root: URL) throws {
         let file = root.appendingPathComponent(".local-model-inventory.json")
         guard let data = try? Data(contentsOf: file),
@@ -185,7 +194,7 @@ final class LocalRuntime {
         if child.isRunning { child.terminate() }
     }
 
-    private func runtimeRoot(environment: [String: String]) throws -> URL {
+    private static func runtimeRoot(environment: [String: String]) throws -> URL {
         if let configured = environment["HERDR_VOICE_LOCAL_OPENLIVE_DIR"] ?? environment["HERDR_LOCAL_OPENLIVE_DIR"],
            !configured.isEmpty {
             return URL(fileURLWithPath: configured, isDirectory: true)
