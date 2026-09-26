@@ -58,11 +58,12 @@ extension HerdrTools {
         p.terminationHandler = { _ in exited.signal() }
         do { try p.run() } catch { return ShellResult(status: -1, output: "failed to start: \(error)", timedOut: false) }
 
-        // Drain concurrently so a chatty command can't block on a full pipe; keep a bounded tail.
+        // Drain concurrently so a chatty command can't block on a full pipe; keep a bounded tail. A dedicated
+        // thread, not the GCD pool: with its threads blocked (parallel tests) the drain started too late to count.
         let lock = NSLock()
         var tail = Data()
         let drained = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        Thread {
             while case let chunk = pipe.fileHandleForReading.availableData, !chunk.isEmpty {
                 lock.withLock {
                     tail.append(chunk)
@@ -70,7 +71,7 @@ extension HerdrTools {
                 }
             }
             drained.signal()
-        }
+        }.start()
 
         var timedOut = false
         if exited.wait(timeout: .now() + timeout) == .timedOut {
