@@ -62,3 +62,10 @@ private let tabStrip = win(11248, nil, h: 32)
     // Which is exactly what keeps the orb off another tab.
     #expect(WindowPin.target(windows: merged, hosts: [terminal]) == nil)
 }
+
+@Test func theOrbReassertsItselfOnlyWhenItShouldBeShowingButIsnt() {
+    #expect(WindowPin.needsReassert(wantsVisible: true, isVisible: false, onActiveSpace: true))
+    #expect(WindowPin.needsReassert(wantsVisible: true, isVisible: true, onActiveSpace: false))
+    #expect(!WindowPin.needsReassert(wantsVisible: true, isVisible: true, onActiveSpace: true))
+    #expect(!WindowPin.needsReassert(wantsVisible: false, isVisible: false, onActiveSpace: false)) // hidden on purpose
+}

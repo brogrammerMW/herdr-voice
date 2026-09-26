@@ -308,6 +308,10 @@ Herdr window itself isn't shown:
 - the window is minimized or on another Space,
 - a different tab of that terminal is selected.
 
+It sits above every window, including a zoomed or full-screen terminal (zooming a Herdr pane never affects it).
+If anything else ever hides it while the Herdr window is showing, it puts itself back within a second and logs
+`◎ the orb had been hidden; showing it again`.
+
 herdr-voice finds that window without extra permissions. It walks up from itself (and from any running `herdr`
 client) to the terminal app, then picks the terminal window whose title mentions "herdr". If the terminal's titles
 can't be read, or never mention Herdr, it follows the terminal's front window instead.
