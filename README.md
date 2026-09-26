@@ -527,7 +527,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 149 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 151 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
