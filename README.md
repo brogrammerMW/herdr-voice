@@ -97,6 +97,22 @@ model cache is inventoried and hashed at setup rather than checked into this rep
 hybrid keyed-brain settings, failure behavior, demos, tool examples and benchmark limits are in
 [docs/local-openlive.md](docs/local-openlive.md).
 
+**What to expect.** While the speech models load (about 20 seconds once cached, a few minutes the first time) the
+orb is amber with the thinking bubble; it turns blue when the voice is listening. If the speech helper crashes,
+herdr-voice relaunches it and reconnects on its own, in about 5 seconds. Local mode answers in roughly two
+seconds after you stop talking, slower than Grok; it's the choice for privacy, working offline, and no per-minute
+audio fees, not for speed. The default brain is Qwen 3.5 4B; for better answers at some speed cost, set
+`HERDR_VOICE_LOCAL_BRAIN_MODEL=qwen3.5:9b` (after `ollama pull qwen3.5:9b`).
+
+**Using it from the installed plugin.** The plugin's own copy of `local-openlive/` isn't built, so point the plugin at
+your set-up checkout in `config.env` (`herdr plugin config-dir brogrammermw.herdr-voice`):
+
+```
+HERDR_VOICE_LOCAL_OPENLIVE_DIR=/path/to/your/herdr-voice/local-openlive
+```
+
+Restart the voice, and **Local OpenLive** becomes selectable in the orb's menu.
+
 ## Install as a Herdr plugin (recommended)
 
 herdr-voice is a [Herdr plugin](https://herdr.dev/docs/plugins/). Install it from GitHub; Herdr shows what it will run,
@@ -555,7 +571,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 151 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 188 tests: local mode (wire, state directory, warm-up, relaunch, menu), plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
