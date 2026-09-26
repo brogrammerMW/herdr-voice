@@ -51,16 +51,6 @@ public struct Recap {
         }
     }
 
-    public mutating func replaceLast(_ speaker: String, with text: String) {
-        guard let index = lines.lastIndex(where: { $0.hasPrefix("\(speaker): ") }) else { return }
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty {
-            lines.remove(at: index)
-            itemIDs.remove(at: index)
-        }
-        else { lines[index] = "\(speaker): \(value.count > 300 ? String(value.prefix(300)) + "…" : value)" }
-    }
-
     public mutating func replace(itemID: String, speaker: String, with text: String) {
         guard let index = itemIDs.lastIndex(where: { $0 == itemID }) else { return }
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)

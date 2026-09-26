@@ -129,7 +129,7 @@ final class Realtime {
     private(set) var dormant = false
     /// A reconnect is already scheduled by the backoff.
     private var retryPending = false
-    private var providerPreparing = false
+    private(set) var providerPreparing = false
     private var quietTimer: DispatchSourceTimer?
 
     init(provider: Provider, key: String, voice: String, request: URLRequest? = nil) {
@@ -589,13 +589,15 @@ final class Realtime {
             // Barge-in: talking over the assistant cuts its audio; the server VAD handles the rest. The provider also
             // hears the voice's own echo and noise as speech, so only cut when this mic heard a loud onset too.
             let heard = !gated || micShared.withLock { Date().timeIntervalSince($0.lastLoud) < Self.bargeInWindow }
+            if provider == .local {
+                // Every local onset starts a new epoch and the bridge cancels everything older, heard or not, so
+                // no response.created/done or reply from before it will arrive; waiting on one would stall replies.
+                if responseActive { send(.cancelReply) }
+                replies.reset()
+                awaitingCreated = false
+                droppingAudio = audio.isSpeaking
+            }
             if heard {
-                if provider == .local {
-                    if responseActive { send(.cancelReply) }
-                    replies.reset()
-                    awaitingCreated = false
-                    droppingAudio = audio.isSpeaking
-                }
                 cutPlayback()
             } else if audio.isSpeaking { log("… kept talking: the mic didn't hear you (echo or noise)") }
         case .functionCall(let callID, let name, let args):

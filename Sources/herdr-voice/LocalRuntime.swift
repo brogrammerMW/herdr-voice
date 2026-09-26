@@ -106,7 +106,11 @@ final class LocalRuntime {
             throw RuntimeError.failed("Local OpenLive startup was superseded by a newer provider choice")
         }
         stdout.fileHandleForReading.readabilityHandler = nil
-        let object = try lock.withLock { try result!.get() }
+        let object: [String: Any]
+        do { object = try lock.withLock { try result!.get() } } catch {
+            stop(operation: operation, child: child) // an invalid readiness record must not leave the child running
+            throw error
+        }
         if !setup {
             do { try verifyInventory(object, root: root) }
             catch {
