@@ -10,7 +10,7 @@ public enum HerdrTools {
         ["type": "boolean", "description": "true only on the second call, after the developer said yes"]
 
     /// Tools offered to the voice model. `run_shell` is only offered when HERDR_VOICE_SHELL=1.
-    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + [startAgentSchema] + paneSchemas + (shellEnabled ? [shellSchema] : []) }
+    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + [startAgentSchema] + paneSchemas + [splitPaneSchema] + (shellEnabled ? [shellSchema] : []) }
 
     static let herdrSchemas: [[String: Any]] = [
         fn("list_agents", "List coding agents running in Herdr panes with name, status, cwd and title.", [:], []),
@@ -140,6 +140,8 @@ public enum HerdrTools {
             guard shellEnabled else { return Outcome(output: "error: run_shell is disabled (set HERDR_VOICE_SHELL=1)", watch: nil) }
             return Outcome(output: runShell(args["command"] as? String ?? "", cwd: args["cwd"] as? String,
                                             confirmed: confirmed, gate), watch: nil)
+        case "split_pane":
+            return Outcome(output: splitPane(args, run, gate, userInitiated: userInitiated), watch: nil)
         case "start_agent":
             return startAgent(args, run, gate, userInitiated: userInitiated)
         case _ where paneTools.contains(name):

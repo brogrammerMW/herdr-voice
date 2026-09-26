@@ -209,6 +209,8 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "Make a worktree for forge on a new branch fix-login" | Creates the branch and worktree and opens it as a workspace |
 | "Open the fix-login worktree" | Opens an existing worktree that isn't open in Herdr |
 | "Make a worktree for fix login and start Claude in it" | New branch and worktree opened as a workspace, Claude Code started there (Codex if you say so) |
+| "Start Claude to the right of claude-2" / "open Codex below the dev server" | Splits that pane right or down and starts the agent in the new pane |
+| "Split the build pane down" | Opens a new shell pane below it (or to the right) |
 | "Start Codex in a new tab of forge and have it add tests" | New tab, Codex started, and your instruction sent; you hear a summary when it's done |
 | "Is the dev server up?" | Finds the pane running it and summarizes its latest output |
 | "Tell me when the build prints done" | Watches that pane in the background and speaks up when the text appears (or after 10 minutes without it) |
@@ -394,7 +396,8 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `create_tab` / `rename_tab` | `herdr tab create --no-focus [--workspace] [--label] [--cwd]` / `herdr tab rename` |
 | `list_worktrees` | `herdr worktree list --workspace <id>` |
 | `create_worktree` / `open_worktree` | `herdr worktree create --workspace <id> --branch <name> [--base <ref>]` / `herdr worktree open --workspace <id> --branch <name>` |
-| `start_agent` | `herdr worktree create`, `herdr tab create` or `herdr workspace create`, then `herdr agent start <name> --kind claude\|codex --pane <new pane>`, then `herdr agent prompt` if you gave an instruction |
+| `start_agent` | `herdr pane split` (with `split` and `direction`), `herdr worktree create`, `herdr tab create` or `herdr workspace create`, then `herdr agent start <name> --kind claude\|codex --pane <new pane>`, then `herdr agent prompt` if you gave an instruction |
+| `split_pane` | `herdr pane split <pane> --direction right\|down --no-focus [--cwd]`; returns the new pane's ID |
 | `list_panes` / `read_pane` | `herdr api snapshot` / `herdr pane read <pane> --source recent` |
 | `watch_pane` | `herdr pane wait-output <pane> --regex <text> --lines 15 --timeout <ms>` in the background |
 | `close_workspace` / `close_tab` | `herdr workspace close` / `herdr tab close` |
@@ -503,7 +506,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 131 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 139 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
