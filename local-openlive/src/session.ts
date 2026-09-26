@@ -299,7 +299,7 @@ export class BridgeSession {
     if (epoch !== this.epoch || generation !== this.responseGeneration || signal.aborted) return;
     const result = await this.deps.synthesize(text, voice, epoch, generation);
     if (epoch !== this.epoch || generation !== this.responseGeneration || signal.aborted) return;
-    const pcm = floatToPCM24(result.audio, result.sampleRate);
+    const pcm = floatToPCM24(trimSilence(result.audio, result.sampleRate), result.sampleRate);
     let endSamples = 0;
     const record = this.spoken.get(item)!;
     const chunks = record.chunks;
@@ -392,6 +392,24 @@ function requiredID(value: string): string {
 function boundedText(value: string): string {
   if (typeof value !== "string" || value.length > 1_000_000) throw new Error("text too large");
   return value;
+}
+
+/** Kokoro pads every sentence with ~400 ms of silence at each end, which played as 800 ms gaps between
+ *  sentences. Keep a short natural lead-in and pause instead. */
+function trimSilence(audio: Float32Array, sampleRate: number): Float32Array {
+  const frame = Math.max(1, Math.round(sampleRate / 100)); // 10 ms
+  const loud = (start: number) => {
+    let peak = 0;
+    for (let i = start; i < Math.min(start + frame, audio.length); i++) peak = Math.max(peak, Math.abs(audio[i]!));
+    return peak >= 0.01;
+  };
+  let first = 0;
+  while (first < audio.length && !loud(first)) first += frame;
+  if (first >= audio.length) return audio; // all quiet: leave it for the caller's checks
+  let last = audio.length - frame;
+  while (last > first && !loud(last)) last -= frame;
+  const lead = Math.round(sampleRate * 0.04), tail = Math.round(sampleRate * 0.15);
+  return audio.subarray(Math.max(0, first - lead), Math.min(audio.length, last + frame + tail));
 }
 
 /** Milliseconds of 16 kHz audio loud enough to be speech, in 20 ms frames. */

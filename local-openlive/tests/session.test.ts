@@ -363,3 +363,34 @@ describe("phantom microphone turns (#82)", () => {
     expect(heard(events)).toEqual([]);
   });
 });
+
+describe("smooth local speech", () => {
+  it("trims the silence Kokoro pads around each sentence so sentences run together naturally", async () => {
+    const rate = 24_000;
+    const padded = new Float32Array(rate * 2); // 500 ms silence, 1 s of voice, 500 ms silence
+    for (let i = rate / 2; i < rate * 1.5; i++) padded[i] = 0.3 * Math.sin(2 * Math.PI * 220 * i / rate);
+    const { session, events } = harness({
+      stream: async function* () { yield { type: "text", delta: "This is one complete sentence to speak aloud now." }; yield { type: "done", stopReason: "stop" }; },
+      synthesize: async () => ({ audio: padded, sampleRate: rate }),
+    });
+    await session.handle(setup());
+    await session.handle({ type: "conversation.text", epoch: 0, text: "hi", expects_reply: true });
+    await session.handle({ type: "response.create", epoch: 0 });
+    const bytes = events.filter((e) => e.type === "response.audio.delta")
+      .reduce((sum, e) => sum + Buffer.from(String(e.delta), "base64").length, 0);
+    const ms = bytes / 2 / 24;
+    expect(ms).toBeGreaterThanOrEqual(1_000);
+    expect(ms).toBeLessThanOrEqual(1_000 + 40 + 150 + 20);
+  });
+
+  it("keeps a sentence that is all quiet rather than dropping it", async () => {
+    const { session, events } = harness({
+      stream: async function* () { yield { type: "text", delta: "This is one complete sentence to speak aloud now." }; yield { type: "done", stopReason: "stop" }; },
+      synthesize: async () => ({ audio: new Float32Array(2400), sampleRate: 24_000 }),
+    });
+    await session.handle(setup());
+    await session.handle({ type: "conversation.text", epoch: 0, text: "hi", expects_reply: true });
+    await session.handle({ type: "response.create", epoch: 0 });
+    expect(events.some((e) => e.type === "response.audio.delta")).toBe(true);
+  });
+});
