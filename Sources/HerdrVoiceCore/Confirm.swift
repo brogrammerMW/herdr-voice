@@ -95,11 +95,14 @@ extension HerdrTools {
             if let waiting = gate.request(action, question: question) {
                 return "error: another confirmation is still waiting (\(waiting)). Get the developer's answer to that first."
             }
-            return "CONFIRMATION REQUIRED. Ask the developer, in one short sentence: \(question)? "
-                + "Only after they say yes, call \(tool) again with the same arguments and confirmed=true."
+            return "CONFIRMATION REQUIRED. Nothing was done yet. Ask the developer, in one short sentence: \(question)? "
+                + "Then stop and wait for their spoken answer. Only after they say yes, call \(tool) again with the same "
+                + "arguments and confirmed=true."
         }
+        // Small models tend to report a refused action as done, so the refusal says so bluntly.
         guard gate.consume(action) else {
-            return "error: the developer has not confirmed (\(question)). Call \(tool) without confirmed and ask again."
+            return "NOT DONE. Nothing happened: the developer has not said yes to \(question). "
+                + "Tell them it was not done, never that it was. To try again, call \(tool) without confirmed and ask them."
         }
         return nil
     }
