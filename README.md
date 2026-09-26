@@ -53,7 +53,8 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
   aloud. That isn't just an instruction: herdr-voice caps how long a reply can run and corrects the model when it
   reads code aloud (see [How it talks](#how-it-talks)).
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
-- **Choice of provider and voice.** Grok (default), OpenAI or Gemini Live, and any of their voices (Eve, Rex, Ara,
+- **Choice of provider and voice.** Local OpenLive (the default once it's set up), Grok (the default until then),
+  OpenAI or Gemini Live, and any of their voices (Eve, Rex, Ara,
   Sal, Leo, or a custom cloned voice on Grok). Switch models on the fly from the orb's right-click menu.
 - **Local OpenLive mode.** The same native mic, orb, confirmation gate, watches, recap, and 30 or 32 Swift tools can use
   pinned OpenLive WebGPU Whisper and Kokoro speech with loopback Ollama Qwen 3.5. Local speech has no cloud-audio fees and
@@ -341,7 +342,7 @@ an environment variable set some other way still wins.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `local`, `grok`, `openai` or `gemini` |
+| `HERDR_VOICE_PROVIDER` or `--provider` | `local` once it's set up, else `grok` | `local`, `grok`, `openai` or `gemini` |
 | `XAI_API_KEY` | | Grok key, if it isn't in the Keychain (see [API keys](#api-keys)) |
 | `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
 | `GEMINI_API_KEY` | | Gemini key, if it isn't in the Keychain |
@@ -575,7 +576,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 189 tests: local mode (wire, state directory, warm-up, relaunch, menu), plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 190 tests: local mode (wire, state directory, warm-up, relaunch, menu), plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```

@@ -152,6 +152,10 @@ public enum Provider: String, CaseIterable {
     }
 
     public var requiresAPIKey: Bool { self != .local }
+
+    /// The provider to start with when neither --provider nor HERDR_VOICE_PROVIDER says: Local OpenLive once it's set
+    /// up on this Mac, otherwise Grok, so a fresh install still starts on first run.
+    public static func defaultChoice(localIsBuilt: Bool) -> Provider { localIsBuilt ? .local : .grok }
 }
 
 /// Reads generic passwords from the login Keychain.
