@@ -143,3 +143,52 @@ private let quiet: Float = 0.0003, speech: Float = 0.05
     #expect(feed(&g, 1, speech, from: &i).isEmpty)
     #expect(g.noiseFloor > 0)
 }
+
+// Measured on a MacBook's speakers with echo cancellation: the voice's own echo opened the gate at 3–13% of the
+// playback level and cut every reply short (#82).
+@Test func echoOfTheVoiceDoesNotCountAsSpeech() {
+    #expect(EchoGuard.level(0.0189, playback: 0.1507, floor: 0.0001) == 0.0001)
+    #expect(EchoGuard.level(0.0044, playback: 0.1453, floor: 0.0001) == 0.0001)
+}
+
+@Test func talkingOverTheVoiceStillCounts() {
+    #expect(EchoGuard.level(0.08, playback: 0.15, floor: 0.0001) == 0.08)
+    #expect(EchoGuard.level(0.0134, playback: 0, floor: 0.0001) == 0.0134) // nothing playing: unchanged
+}
+
+@Test func theEchoRatioIsTunablePerMachine() {
+    #expect(EchoGuard.ratio(environment: [:]) == EchoGuard.defaultRatio)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "0.5"]) == 0.5)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "nope"]) == EchoGuard.defaultRatio)
+    #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "-1"]) == EchoGuard.defaultRatio)
+}
+
+// Live test: a long sentence raised the floor estimate to 0.04 and the local gate closed on the speaker mid-sentence.
+@Test func localGateKeepsTheFloorFromBeforeSpeechWhileOpen() {
+    var g = SpeechGate<Int>(policy: .local), i = 0
+    _ = feed(&g, 160, quiet, from: &i)
+    _ = feed(&g, 5, speech, from: &i)
+    #expect(g.isOpen)
+    // 4 s of steady talking, then 600 ms of softer words: still 30× the room's noise, but a fifth of the speech.
+    _ = feed(&g, 200, speech, from: &i)
+    _ = feed(&g, 30, speech / 5, from: &i)
+    #expect(g.isOpen)
+}
+
+@Test func localGateClosesAfterTheLongestUtteranceEvenIfNoiseStaysLoud() {
+    var g = SpeechGate<Int>(policy: .local), i = 0
+    _ = feed(&g, 160, quiet, from: &i)
+    _ = feed(&g, SpeechGate<Int>.maxHoldChunks + 10, speech, from: &i)
+    #expect(!g.isOpen)
+}
+
+// Live test: the gate opened at 0.0030 while the voice's playback had dropped to 0.0116 at the soft end of a word;
+// the room still echoed the louder audio from just before. The echo reference fades instead of dropping at once.
+@Test func theEchoReferenceFadesRatherThanDroppingWithPlayback() {
+    var reference: Float = 0
+    reference = EchoGuard.reference(previous: reference, playback: 0.15)
+    for _ in 0..<5 { reference = EchoGuard.reference(previous: reference, playback: 0.0116) } // 100 ms later
+    #expect(EchoGuard.level(0.0030, playback: reference, floor: 0.0001) == 0.0001)
+    for _ in 0..<60 { reference = EchoGuard.reference(previous: reference, playback: 0) } // 1.2 s of silence
+    #expect(EchoGuard.level(0.0030, playback: reference, floor: 0.0001) == 0.0030)
+}

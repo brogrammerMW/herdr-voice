@@ -1,5 +1,5 @@
 import type { ChatRequest, Message, ProviderEvent, ToolCall, ToolDef } from "../vendor/harness/types.js";
-import { isJunk, SentenceChunker, stripMarkdown } from "../vendor/live/voiceText.js";
+import { endsMidThought, isJunk, SentenceChunker, stripMarkdown } from "../vendor/live/voiceText.js";
 
 type ToolManifest = { profile: string; count: number; names: string[]; digest: string };
 type SessionUpdate = {
@@ -45,6 +45,11 @@ const MAX_HISTORY = 80;
 const MAX_INPUT_BYTES = 24_000 * 2 * 30;
 const MAX_TTS_CHUNKS = 12;
 const MAX_SPOKEN_ITEMS = 20;
+// Turn-taking thresholds from upstream OpenLive's voiceEngine (minSpeechMs, RMS_GATE, balanced holdMs).
+const MIN_VOICED_MS = 200;
+const VOICED_RMS = 0.006;
+const HOLD_MS = 4_000;
+const MAX_HELD_SAMPLES = 16_000 * 20;
 const UNFINISHED_TOOL = "No result yet: the user spoke before this call finished. Its result may still arrive.";
 
 export class BridgeSession {
@@ -62,6 +67,11 @@ export class BridgeSession {
   private responseGeneration = 0;
   private responseSequence = 0;
   private inputGeneration = 0;
+  /** Bumped by input.clear (mute): speech from before it must never reach a later turn. */
+  private clears = 0;
+  private lastUtterance?: { epoch: number; id: string };
+  /** A transcript that trailed off mid-thought, waiting to be joined with what the user says next. */
+  private held?: { audio: Float32Array; text: string; epoch: number; id: string; timer?: ReturnType<typeof setTimeout> };
 
   constructor(private readonly deps: BridgeDependencies) {}
 
@@ -76,6 +86,8 @@ export class BridgeSession {
       this.epoch = message.epoch;
       this.inputGeneration += 1;
       this.utterance = { id: utteranceID, epoch: message.epoch, chunks: [], bytes: 0 };
+      this.lastUtterance = { epoch: message.epoch, id: utteranceID };
+      clearTimeout(this.held?.timer); // the user is continuing; this utterance's commit decides
       return;
     }
     case "input.append":
@@ -88,8 +100,11 @@ export class BridgeSession {
       if (!Number.isSafeInteger(message.epoch) || message.epoch < this.epoch) return;
       this.epoch = message.epoch;
       this.inputGeneration += 1;
+      this.clears += 1;
       this.cancel();
       this.utterance = undefined;
+      clearTimeout(this.held?.timer);
+      this.held = undefined;
       return;
     case "conversation.text":
       if (message.epoch !== this.epoch) return;
@@ -137,15 +152,48 @@ export class BridgeSession {
   private async commit(): Promise<void> {
     const utterance = this.utterance!;
     const generation = this.inputGeneration;
+    const clears = this.clears;
     this.utterance = undefined;
-    const pcm24 = Buffer.concat(utterance.chunks);
-    const audio16 = resampleInt16PCM(pcm24, 24_000, 16_000);
-    const text = (await this.deps.transcribe(audio16, utterance.epoch)).trim();
-    if (utterance.epoch !== this.epoch || generation !== this.inputGeneration || isJunk(text)) return;
+    const audio16 = resampleInt16PCM(Buffer.concat(utterance.chunks), 24_000, 16_000);
+    const held = this.held;
+    if (voicedMs(audio16) < MIN_VOICED_MS) {
+      // A click, cough or hiss that opened the gate: Whisper would invent words for it. Not a turn.
+      if (held && utterance.epoch === this.epoch) this.hold({ ...held, epoch: utterance.epoch, id: utterance.id });
+      return;
+    }
+    const audio = held ? concatAudio(held.audio, audio16) : audio16;
+    const text = (await this.deps.transcribe(audio, utterance.epoch)).trim();
+    if (clears !== this.clears) return;
+    if (utterance.epoch !== this.epoch || generation !== this.inputGeneration) {
+      // The gate reopened while this was transcribing: it's the start of the same sentence, so the newer
+      // segment's commit transcribes both together. Nothing newer still open means that commit already ran.
+      if (this.utterance) this.held = { audio, text, epoch: utterance.epoch, id: utterance.id };
+      else if (this.lastUtterance) this.hold({ audio, text, ...this.lastUtterance });
+      return;
+    }
+    this.held = undefined;
+    if (isJunk(text)) return;
+    if (endsMidThought(text) && audio.length < MAX_HELD_SAMPLES) {
+      this.hold({ audio, text, epoch: utterance.epoch, id: utterance.id });
+      return;
+    }
+    this.acceptTranscript(utterance.epoch, utterance.id, text);
+  }
+
+  private hold(turn: { audio: Float32Array; text: string; epoch: number; id: string }): void {
+    clearTimeout(this.held?.timer);
+    const held = { ...turn, timer: setTimeout(() => {
+      if (this.held !== held) return;
+      this.held = undefined;
+      if (held.epoch === this.epoch && !this.utterance) this.acceptTranscript(held.epoch, held.id, held.text);
+    }, HOLD_MS) };
+    this.held = held;
+  }
+
+  private acceptTranscript(epoch: number, utteranceID: string, text: string): void {
     this.pushHistory({ role: "user", text });
     this.deps.emit({
-      type: "input.transcription.completed", epoch: utterance.epoch, utterance_id: utterance.id,
-      source: "microphone", transcript: text,
+      type: "input.transcription.completed", epoch, utterance_id: utteranceID, source: "microphone", transcript: text,
     });
   }
 
@@ -251,7 +299,7 @@ export class BridgeSession {
     if (epoch !== this.epoch || generation !== this.responseGeneration || signal.aborted) return;
     const result = await this.deps.synthesize(text, voice, epoch, generation);
     if (epoch !== this.epoch || generation !== this.responseGeneration || signal.aborted) return;
-    const pcm = floatToPCM24(result.audio, result.sampleRate);
+    const pcm = floatToPCM24(trimSilence(result.audio, result.sampleRate), result.sampleRate);
     let endSamples = 0;
     const record = this.spoken.get(item)!;
     const chunks = record.chunks;
@@ -299,8 +347,15 @@ export class BridgeSession {
     const record = this.spoken.get(item);
     if (!record) return;
     const heard = record.chunks.filter((chunk) => chunk.endMs <= Math.max(0, heardMs));
-    const text = heard.map((chunk) => chunk.text).join(" ");
-    if (record.message) record.message.text = text || undefined;
+    // Speech chunks can end mid-sentence; a small model copies half-sentences it finds in its own history.
+    const text = heardSentences(heard.map((chunk) => chunk.text).join(" "));
+    if (record.message) {
+      record.message.text = text || undefined;
+      if (!text && !record.message.toolCalls?.length) {
+        const index = this.history.indexOf(record.message);
+        if (index >= 0) this.history.splice(index, 1);
+      }
+    }
     record.chunks = heard;
     if (item === this.responseItem) this.cancel();
     this.deps.emit({ type: "response.transcript.truncated", epoch: this.epoch, item_id: item, transcript: text });
@@ -344,6 +399,47 @@ function requiredID(value: string): string {
 function boundedText(value: string): string {
   if (typeof value !== "string" || value.length > 1_000_000) throw new Error("text too large");
   return value;
+}
+
+/** The complete sentences of `text`, dropping a trailing fragment ("I'm ready to help. Would"). */
+export function heardSentences(text: string): string {
+  return /^[\s\S]*[.!?]["'”’)\]]*(?=\s|$)/.exec(text.trim())?.[0].trim() ?? "";
+}
+
+/** Kokoro pads every sentence with ~400 ms of silence at each end, which played as 800 ms gaps between
+ *  sentences. Keep a short natural lead-in and pause instead. */
+function trimSilence(audio: Float32Array, sampleRate: number): Float32Array {
+  const frame = Math.max(1, Math.round(sampleRate / 100)); // 10 ms
+  const loud = (start: number) => {
+    let peak = 0;
+    for (let i = start; i < Math.min(start + frame, audio.length); i++) peak = Math.max(peak, Math.abs(audio[i]!));
+    return peak >= 0.01;
+  };
+  let first = 0;
+  while (first < audio.length && !loud(first)) first += frame;
+  if (first >= audio.length) return audio; // all quiet: leave it for the caller's checks
+  let last = audio.length - frame;
+  while (last > first && !loud(last)) last -= frame;
+  const lead = Math.round(sampleRate * 0.04), tail = Math.round(sampleRate * 0.15);
+  return audio.subarray(Math.max(0, first - lead), Math.min(audio.length, last + frame + tail));
+}
+
+/** Milliseconds of 16 kHz audio loud enough to be speech, in 20 ms frames. */
+function voicedMs(audio: Float32Array): number {
+  let voiced = 0;
+  for (let start = 0; start + 320 <= audio.length; start += 320) {
+    let sum = 0;
+    for (let i = start; i < start + 320; i++) sum += audio[i]! * audio[i]!;
+    if (Math.sqrt(sum / 320) >= VOICED_RMS) voiced += 20;
+  }
+  return voiced;
+}
+
+function concatAudio(first: Float32Array, second: Float32Array): Float32Array {
+  const joined = new Float32Array(first.length + second.length);
+  joined.set(first);
+  joined.set(second, first.length);
+  return joined;
 }
 
 function resampleInt16PCM(data: Buffer, fromRate: number, toRate: number): Float32Array {

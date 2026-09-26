@@ -17,9 +17,17 @@ public struct SpeechGate<Chunk> {
     public struct Policy: Equatable, Sendable {
         public let hangoverChunks: Int
         public let honorsProviderHold: Bool
+        /// Local mode has no provider hold, so while open it keeps judging against the floor from before speech
+        /// (the talker's own voice would otherwise raise it and close the gate mid-sentence), up to `maxHoldChunks`.
+        /// The floor keeps learning meanwhile, so a steady new noise that hit the cap doesn't reopen it.
+        public let freezesFloorWhileOpen: Bool
 
-        public static var cloud: Policy { Policy(hangoverChunks: SpeechGate.hangoverChunks, honorsProviderHold: true) }
-        public static var local: Policy { Policy(hangoverChunks: SpeechGate.localHangoverChunks, honorsProviderHold: false) }
+        public static var cloud: Policy {
+            Policy(hangoverChunks: SpeechGate.hangoverChunks, honorsProviderHold: true, freezesFloorWhileOpen: false)
+        }
+        public static var local: Policy {
+            Policy(hangoverChunks: SpeechGate.localHangoverChunks, honorsProviderHold: false, freezesFloorWhileOpen: true)
+        }
     }
 
     public static var minThreshold: Float { 0.002 }
@@ -28,7 +36,7 @@ public struct SpeechGate<Chunk> {
     public static var onsetChunks: Int { 3 }       // 60 ms
     public static var preRollChunks: Int { 15 }    // 300 ms
     public static var hangoverChunks: Int { 40 }   // 800 ms
-    public static var localHangoverChunks: Int { 8 } // 160 ms, measured separately from cloud server VAD
+    public static var localHangoverChunks: Int { 28 } // 560 ms, upstream OpenLive's 550 ms: shorter split sentences at pauses
     public static var maxHoldChunks: Int { 400 }   // 8 s
     public static var floorWindowChunks: Int { 150 } // 3 s
     /// Audio needed before the first opening, so a hissy mic can't trigger it before its floor is known.
@@ -42,6 +50,8 @@ public struct SpeechGate<Chunk> {
     private var recentIndex = 0
     private var loudRun = 0
     private var quietRun = 0
+    private var openChunks = 0
+    private var holdAtOpen: Float = 0
     /// Consecutive chunks above the hold level while open. One alone is a click or pop, not speech.
     private var holdLoudRun = 0
     private var preRoll: [Chunk] = []
@@ -65,15 +75,18 @@ public struct SpeechGate<Chunk> {
     /// this chunk while open.
     public mutating func process(_ chunk: Chunk, level: Float, holdOpen: Bool) -> [Chunk] {
         // Judge against the floor from *before* this chunk, then record it.
-        let open = openThreshold, hold = holdThreshold
+        let frozen = isOpen && policy.freezesFloorWhileOpen
+        let open = openThreshold, hold = frozen ? holdAtOpen : holdThreshold
         remember(level)
         if isOpen {
+            openChunks += 1
             // Speech is never a lone 20 ms spike: an isolated click (a fan's tick, a key) doesn't restart the
             // end-of-speech countdown; two loud chunks in a row do.
             holdLoudRun = level > hold ? holdLoudRun + 1 : 0
             quietRun = holdLoudRun >= 2 ? 0 : quietRun + 1
             let providerHolding = policy.honorsProviderHold && holdOpen && quietRun < Self.maxHoldChunks
-            if quietRun >= policy.hangoverChunks && !providerHolding {
+            let overlong = frozen && openChunks >= Self.maxHoldChunks // a new steady noise must not hold it open
+            if (quietRun >= policy.hangoverChunks && !providerHolding) || overlong {
                 isOpen = false
                 loudRun = 0
                 preRoll.removeAll()
@@ -86,6 +99,8 @@ public struct SpeechGate<Chunk> {
         guard loudRun >= Self.onsetChunks, recent.count >= Self.warmupChunks else { return [] }
         isOpen = true
         quietRun = 0
+        openChunks = 0
+        holdAtOpen = hold
         holdLoudRun = 0
         defer { preRoll.removeAll() }
         return preRoll
@@ -106,5 +121,30 @@ public struct SpeechGate<Chunk> {
         loudRun = 0
         quietRun = 0
         preRoll.removeAll()
+    }
+}
+
+/// Local mode starts a new turn, and cancels the reply, whenever the gate opens. Echo cancellation still leaks some of
+/// the voice's own playback into the mic, so while it plays only input louder than `ratio` × playback counts as speech.
+/// Quieter input is reported at the noise floor, which leaves the floor estimate where it was.
+public enum EchoGuard {
+    /// Measured echo on a MacBook's speakers was 3–13% of the playback level; twice the worst of that.
+    public static let defaultRatio: Float = 0.25
+
+    /// HERDR_VOICE_LOCAL_ECHO_RATIO tunes it: raise it if the voice still cuts itself off, lower it if talking
+    /// over the voice doesn't interrupt it.
+    public static func ratio(environment: [String: String]) -> Float {
+        guard let value = environment["HERDR_VOICE_LOCAL_ECHO_RATIO"].flatMap(Float.init), value >= 0 else { return defaultRatio }
+        return value
+    }
+
+    /// The playback level to guard against, per 20 ms chunk: echo and room reverb outlast a drop in playback, so it
+    /// fades (about 60 dB over 0.8 s) instead of following playback down.
+    public static func reference(previous: Float, playback: Float) -> Float {
+        max(playback, previous * 0.85)
+    }
+
+    public static func level(_ level: Float, playback: Float, floor: Float, ratio: Float = defaultRatio) -> Float {
+        level < playback * ratio ? min(level, floor) : level
     }
 }

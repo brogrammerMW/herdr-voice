@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { BridgeSession, type BridgeDependencies, type WireMessage } from "../src/session.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BridgeSession, heardSentences, type BridgeDependencies, type WireMessage } from "../src/session.js";
 
 const tools = [
   { name: "list_agents", description: "List agents", parameters: { type: "object", properties: {} } },
@@ -16,6 +16,23 @@ function setup(): Extract<WireMessage, { type: "session.update" }> {
       tool_manifest: { profile: "test1", count: 1, names: ["list_agents"], digest: "test-digest" },
     },
   };
+}
+
+/** 20 ms mic packets (PCM16 24 kHz, like Swift sends): `speechMs` of a 200 Hz tone at `level`, then quiet. */
+function packets(speechMs: number, level = 0.2, quietMs = 460): string[] {
+  const frames = (speechMs + quietMs) / 20;
+  return Array.from({ length: frames }, (_, frame) => {
+    const data = Buffer.alloc(480 * 2);
+    const amplitude = frame * 20 < speechMs ? level : 0.0005;
+    for (let i = 0; i < 480; i++) data.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 200 * (frame * 480 + i) / 24_000) * amplitude * 32767), i * 2);
+    return data.toString("base64");
+  });
+}
+
+async function say(session: BridgeSession, epoch: number, id: string, speechMs = 600, level = 0.2): Promise<void> {
+  await session.handle({ type: "input.begin", epoch, utterance_id: id });
+  for (const audio of packets(speechMs, level)) await session.handle({ type: "input.append", epoch, utterance_id: id, audio });
+  await session.handle({ type: "input.commit", epoch, utterance_id: id });
 }
 
 function harness(overrides: Partial<BridgeDependencies> = {}) {
@@ -42,9 +59,7 @@ describe("BridgeSession", () => {
   it("creates a microphone transcript only after committed PCM", async () => {
     const { session, events } = harness();
     await session.handle(setup());
-    await session.handle({ type: "input.begin", epoch: 1, utterance_id: "u1" });
-    await session.handle({ type: "input.append", epoch: 1, utterance_id: "u1", audio: "AAAAAA==" });
-    await session.handle({ type: "input.commit", epoch: 1, utterance_id: "u1" });
+    await say(session, 1, "u1");
     expect(events).toContainEqual({
       type: "input.transcription.completed", epoch: 1, utterance_id: "u1",
       source: "microphone", transcript: "List my agents.",
@@ -83,8 +98,7 @@ describe("BridgeSession", () => {
     await session.handle(setup());
     await session.handle({ type: "conversation.text", epoch: 0, text: "list", expects_reply: true });
     await session.handle({ type: "response.create", epoch: 0 });
-    await session.handle({ type: "input.begin", epoch: 1, utterance_id: "u1" });
-    await session.handle({ type: "input.commit", epoch: 1, utterance_id: "u1" });
+    await say(session, 1, "u1");
     await session.handle({ type: "response.create", epoch: 1 });
     const roles = () => session.history.map((m) => m.role);
     expect(roles()).toEqual(["system", "user", "assistant", "tool", "user", "assistant"]);
@@ -206,9 +220,9 @@ describe("BridgeSession", () => {
     await session.handle({ type: "conversation.text", epoch: 0, text: "two", expects_reply: true });
     await session.handle({ type: "response.create", epoch: 0 });
     await session.handle({ type: "response.truncate", epoch: 0, item_id: firstItem, audio_end_ms: 0 });
+    // Nothing of the first reply was heard and it called no tool: it leaves the history entirely.
     const assistants = session.history.filter((message) => message.role === "assistant");
-    expect(assistants[0]).toMatchObject({ text: undefined });
-    expect(assistants[1]).toMatchObject({ text: "Second complete response stays intact." });
+    expect(assistants).toEqual([{ role: "assistant", text: "Second complete response stays intact." }]);
   });
 
   it("trims only complete history groups so tool results are never orphaned", async () => {
@@ -236,5 +250,158 @@ describe("BridgeSession", () => {
       if (message.role === "assistant") message.toolCalls?.forEach((call) => known.add(call.id));
       if (message.role === "tool") expect(known.has(message.callId)).toBe(true);
     }
+  });
+});
+
+describe("phantom microphone turns (#82)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const heard = (events: Record<string, unknown>[]) =>
+    events.filter((e) => e.type === "input.transcription.completed").map((e) => e.transcript);
+
+  it("drops a blip too short to be speech without transcribing it", async () => {
+    const transcribe = vi.fn(async () => "for you.");
+    const { session, events } = harness({ transcribe });
+    await session.handle(setup());
+    await say(session, 1, "blip", 100);
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(heard(events)).toEqual([]);
+  });
+
+  it("drops near-silence that opened the gate", async () => {
+    const transcribe = vi.fn(async () => "through.");
+    const { session, events } = harness({ transcribe });
+    await session.handle(setup());
+    await say(session, 1, "hiss", 600, 0.003);
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(heard(events)).toEqual([]);
+  });
+
+  it("still hears a short real answer", async () => {
+    const { session, events } = harness({ transcribe: async () => "Yes." });
+    await session.handle(setup());
+    await say(session, 1, "yes", 280);
+    expect(heard(events)).toEqual(["Yes."]);
+  });
+
+  it("holds a turn that trails off and transcribes it together with the next one", async () => {
+    const lengths: number[] = [];
+    const texts = ["Tell claude to", "Tell claude to run the tests."];
+    const { session, events } = harness({ transcribe: async (audio) => { lengths.push(audio.length); return texts[lengths.length - 1]!; } });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    expect(heard(events)).toEqual([]);
+    await say(session, 2, "b");
+    expect(lengths[1]).toBeGreaterThan(lengths[0]! * 1.9);
+    expect(events.filter((e) => e.type === "input.transcription.completed"))
+      .toEqual([{ type: "input.transcription.completed", epoch: 2, utterance_id: "b", source: "microphone",
+                  transcript: "Tell claude to run the tests." }]);
+    expect(session.history.filter((m) => m.role === "user")).toEqual([{ role: "user", text: "Tell claude to run the tests." }]);
+  });
+
+  it("sends a held turn once nobody continues it", async () => {
+    vi.useFakeTimers();
+    const { session, events } = harness({ transcribe: async () => "Close the build pane and" });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    expect(heard(events)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(heard(events)).toEqual(["Close the build pane and"]);
+  });
+
+  it("joins a segment still being transcribed into the next one instead of dropping it", async () => {
+    let first!: (text: string) => void;
+    const lengths: number[] = [];
+    const { session, events } = harness({ transcribe: async (audio) => {
+      lengths.push(audio.length);
+      return lengths.length === 1 ? new Promise<string>((resolve) => { first = resolve; }) : "Open another worktree under herdr-voice.";
+    } });
+    await session.handle(setup());
+    const earlier = (async () => {
+      await session.handle({ type: "input.begin", epoch: 1, utterance_id: "a" });
+      for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 1, utterance_id: "a", audio });
+      await session.handle({ type: "input.commit", epoch: 1, utterance_id: "a" });
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await session.handle({ type: "input.begin", epoch: 2, utterance_id: "b" });
+    first("Open another worktree");
+    await earlier;
+    for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 2, utterance_id: "b", audio });
+    await session.handle({ type: "input.commit", epoch: 2, utterance_id: "b" });
+    expect(lengths[1]).toBeGreaterThan(lengths[0]! * 1.9);
+    expect(heard(events)).toEqual(["Open another worktree under herdr-voice."]);
+  });
+
+  it("does not carry a segment across a mute", async () => {
+    let first!: (text: string) => void;
+    const lengths: number[] = [];
+    const { session, events } = harness({ transcribe: async (audio) => {
+      lengths.push(audio.length);
+      return lengths.length === 1 ? new Promise<string>((resolve) => { first = resolve; }) : "Hello there.";
+    } });
+    await session.handle(setup());
+    const earlier = (async () => {
+      await session.handle({ type: "input.begin", epoch: 1, utterance_id: "a" });
+      for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 1, utterance_id: "a", audio });
+      await session.handle({ type: "input.commit", epoch: 1, utterance_id: "a" });
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await session.handle({ type: "input.clear", epoch: 2 });
+    first("secret");
+    await earlier;
+    await say(session, 3, "b");
+    expect(lengths[1]).toBe(lengths[0]);
+    expect(heard(events)).toEqual(["Hello there."]);
+  });
+
+  it("drops a held turn when the mic is muted", async () => {
+    vi.useFakeTimers();
+    const { session, events } = harness({ transcribe: async () => "Close the build pane and" });
+    await session.handle(setup());
+    await say(session, 1, "a");
+    await session.handle({ type: "input.clear", epoch: 2 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heard(events)).toEqual([]);
+  });
+});
+
+describe("smooth local speech", () => {
+  it("trims the silence Kokoro pads around each sentence so sentences run together naturally", async () => {
+    const rate = 24_000;
+    const padded = new Float32Array(rate * 2); // 500 ms silence, 1 s of voice, 500 ms silence
+    for (let i = rate / 2; i < rate * 1.5; i++) padded[i] = 0.3 * Math.sin(2 * Math.PI * 220 * i / rate);
+    const { session, events } = harness({
+      stream: async function* () { yield { type: "text", delta: "This is one complete sentence to speak aloud now." }; yield { type: "done", stopReason: "stop" }; },
+      synthesize: async () => ({ audio: padded, sampleRate: rate }),
+    });
+    await session.handle(setup());
+    await session.handle({ type: "conversation.text", epoch: 0, text: "hi", expects_reply: true });
+    await session.handle({ type: "response.create", epoch: 0 });
+    const bytes = events.filter((e) => e.type === "response.audio.delta")
+      .reduce((sum, e) => sum + Buffer.from(String(e.delta), "base64").length, 0);
+    const ms = bytes / 2 / 24;
+    expect(ms).toBeGreaterThanOrEqual(1_000);
+    expect(ms).toBeLessThanOrEqual(1_000 + 40 + 150 + 20);
+  });
+
+  it("keeps a sentence that is all quiet rather than dropping it", async () => {
+    const { session, events } = harness({
+      stream: async function* () { yield { type: "text", delta: "This is one complete sentence to speak aloud now." }; yield { type: "done", stopReason: "stop" }; },
+      synthesize: async () => ({ audio: new Float32Array(2400), sampleRate: 24_000 }),
+    });
+    await session.handle(setup());
+    await session.handle({ type: "conversation.text", epoch: 0, text: "hi", expects_reply: true });
+    await session.handle({ type: "response.create", epoch: 0 });
+    expect(events.some((e) => e.type === "response.audio.delta")).toBe(true);
+  });
+});
+
+describe("interrupted replies in the history", () => {
+  // A live session filled the history with replies cut mid-sentence ("I'm ready to help. Would"); Qwen then
+  // copied that and ended 2 of 6 replies mid-sentence, against 0 of 6 with the same history in full sentences.
+  it("keeps only the complete sentences the user heard", () => {
+    expect(heardSentences("Yes, I'm ready to help. Would")).toBe("Yes, I'm ready to help.");
+    expect(heardSentences("I've started a new agent in the \"herdr")).toBe("");
+    expect(heardSentences("Done! It passed. Next I'll")).toBe("Done! It passed.");
+    expect(heardSentences("Is that it? Yes.")).toBe("Is that it? Yes.");
   });
 });

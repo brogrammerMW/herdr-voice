@@ -107,6 +107,18 @@ Confirmation behavior is unchanged. Only a later real Whisper microphone transcr
 typed context, reports, model text and tool output cannot. Speech that began over playback is retained as overlapped
 provenance and cannot confirm an action.
 
+## Turn-taking
+
+Local mode follows upstream OpenLive's defaults. A turn ends after 560 ms of quiet, so a short pause mid-sentence
+doesn't cut you off. Utterances with less than 200 ms of speech-level audio (clicks, coughs, hiss, echo tails) are
+dropped before Whisper sees them, because Whisper invents words for noise. A transcript that trails off ("tell claude
+to…") is held and joined with what you say next; if you say nothing for 4 s, it's sent as is.
+
+While the voice is talking, echo cancellation still lets some of its own audio into the mic. Mic input quieter than
+25% of the playback level doesn't count as speech, so the voice can't interrupt itself; talking over it at a normal
+level still does. If it still cuts itself off, raise `HERDR_VOICE_LOCAL_ECHO_RATIO` (for example `0.4`). If talking
+over it doesn't stop it, lower it. `HERDR_VOICE_GATE_DEBUG=1` logs mic and playback levels each time the gate opens.
+
 ## Latency evidence
 
 The demo's `commitToFirstNonSilentPCMProxyMs` measures input commit to the first returned PCM packet whose absolute
