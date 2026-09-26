@@ -140,6 +140,12 @@ if let holder = lock.holder {
     exit(1)
 }
 
+// Starting as the plugin's voice pane: hide it behind the pane you're in right away, before connecting, however
+// the pane was opened (herdr-voice, a keybinding, or herdr plugin pane open). The orb's menu shows it again.
+if Launch.hidesOnStart(environment: env), let me = env["HERDR_PANE_ID"] {
+    hideVoicePane(me)
+}
+
 // No key yet: in a terminal, ask for it right away (first run); otherwise say how to add one.
 if provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
     print("No \(provider.menuTitle) API key yet.")
@@ -166,8 +172,20 @@ let startedWith = provider
 let session = Realtime(provider: provider, key: key,
                        voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
+/// "Show voice pane" while it's hidden behind the pane it opened next to, "Hide voice pane" while it's in view. Only when
+/// herdr-voice runs in a Herdr pane.
+func voicePaneChoice() -> Orb.MenuChoice? {
+    guard env["HERDR_ENV"] == "1", let me = env["HERDR_PANE_ID"] else { return nil }
+    if VoicePane.isHidden(layout: HerdrTools.herdr(["pane", "layout", "--pane", me])) {
+        return Orb.MenuChoice(title: "Show voice pane", checked: false, enabled: true, separatorAfter: true) {
+            _ = HerdrTools.herdr(VoicePane.showArguments(voicePane: me))
+        }
+    }
+    return Orb.MenuChoice(title: "Hide voice pane", checked: false, enabled: true, separatorAfter: true) { hideVoicePane(me) }
+}
+
 func modelChoices() -> [Orb.MenuChoice] {
-    ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
+    (voicePaneChoice().map { [$0] } ?? []) + ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
         Orb.MenuChoice(title: entry.title, checked: entry.checked, enabled: entry.enabled) {
             guard let found = entry.provider.apiKey(environment: env) else { return }
             session.switchProvider(to: entry.provider, key: found.value,

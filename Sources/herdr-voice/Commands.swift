@@ -42,10 +42,21 @@ func stopRunning() -> Int32 {
 }
 
 /// Opens the plugin's voice pane below the pane this was typed in. False when that isn't possible (plugin not
-/// installed, say), so the caller runs here instead.
+/// installed, say), so the caller runs here instead. The voice hides its pane itself as it starts (hideVoicePane).
 func openVoicePane(provider: String?, environment env: [String: String]) -> Bool {
     let out = HerdrTools.herdr(Launch.paneOpenArguments(pane: env["HERDR_PANE_ID"], provider: provider))
     guard !out.contains("\"error\"") else { return false }
-    print("🎙  herdr-voice is starting in the pane below. Close that pane, or run herdr-voice stop, to end it.")
+    print(Launch.startsHidden(environment: env)
+          ? "🎙  herdr-voice is starting, hidden behind this pane. Right-click the orb → Show voice pane to see it; stop it with herdr-voice stop."
+          : "🎙  herdr-voice is starting in the pane below. Close that pane, or run herdr-voice stop, to end it.")
     return true
+}
+
+/// Hides the voice pane by zooming the pane you're in over it (the focused pane of its tab), or the pane above or left
+/// of it when the voice pane itself has focus. Used as the voice starts and by the orb's "Hide voice pane".
+func hideVoicePane(_ voicePane: String) {
+    let layout = HerdrTools.herdr(["pane", "layout", "--pane", voicePane])
+    let cover = VoicePane.userPane(layout: layout, voicePane: voicePane) ?? VoicePane.hideNeighbors.lazy
+        .compactMap { VoicePane.neighbor(HerdrTools.herdr(VoicePane.neighborArguments(voicePane: voicePane, direction: $0))) }.first
+    if let cover { _ = HerdrTools.herdr(Launch.zoomArguments(pane: cover)) }
 }

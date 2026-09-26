@@ -42,6 +42,8 @@ public enum PluginConfig {
     # HERDR_VOICE_SHELL=1
     # Turn off echo cancellation (use with headphones; saves CPU)
     # HERDR_VOICE_ECHO_CANCEL=0
+    # Show the voice pane when it starts instead of hiding it behind the pane you started it from
+    # HERDR_VOICE_START_HIDDEN=0
     # Keep the orb in the screen corner instead of on the Herdr window
     # HERDR_VOICE_ORB_PIN=0
     # Gemini Live model

@@ -31,12 +31,13 @@ width = "70%"
 height = 16
 command = [".build/release/herdr-voice", "setup"]
 
-# Opens the voice pane below the current one; bind it to a key (see the README).
+# Same as typing herdr-voice: opens the voice pane below the focused pane, hidden behind it unless
+# HERDR_VOICE_START_HIDDEN=0. Bind it to a key (see the README).
 [[actions]]
 id = "start"
 title = "Start voice"
 contexts = ["workspace"]
-command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin brogrammermw.herdr-voice --entrypoint voice --placement split --direction down --no-focus"]
+command = [".build/release/herdr-voice"]
 
 [[actions]]
 id = "setup"

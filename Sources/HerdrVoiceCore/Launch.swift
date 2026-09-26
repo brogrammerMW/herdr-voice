@@ -11,6 +11,22 @@ public enum Launch {
             || env["HERDR_ENV"] != "1"                    // not in Herdr: nowhere to open a pane
     }
 
+    /// Whether the voice pane starts hidden behind the pane you're in (the orb shows the voice's state). On unless
+    /// HERDR_VOICE_START_HIDDEN=0.
+    public static func startsHidden(environment env: [String: String]) -> Bool {
+        env["HERDR_VOICE_START_HIDDEN"] != "0"
+    }
+
+    /// Whether this process hides its own pane as it starts up: only as the plugin's voice pane in Herdr. With --here
+    /// the voice runs in your own pane, and zooming a neighbour over it would hide your work.
+    public static func hidesOnStart(environment env: [String: String]) -> Bool {
+        startsHidden(environment: env) && env["HERDR_ENV"] == "1" && env["HERDR_PANE_ID"] != nil
+            && env["HERDR_PLUGIN_ENTRYPOINT_ID"] != nil
+    }
+
+    /// Zooms `pane` to fill its tab, covering the voice pane that just opened next to it.
+    public static func zoomArguments(pane: String) -> [String] { ["pane", "zoom", pane, "--on"] }
+
     /// `herdr plugin pane open` for the voice pane, split below `pane`, carrying a --provider choice along.
     public static func paneOpenArguments(pane: String?, provider: String?) -> [String] {
         ["plugin", "pane", "open", "--plugin", pluginID, "--entrypoint", "voice", "--placement", "split",
@@ -43,6 +59,35 @@ public enum LauncherScript {
     public static func isLauncher(_ contents: String) -> Bool { contents.contains(marker) }
 
     static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+}
+
+/// Showing and hiding the voice pane from the orb's menu. It's hidden when the pane it opened next to is zoomed over it.
+public enum VoicePane {
+    /// Whether the tab holding the voice pane is zoomed (so the voice pane is out of sight), from `herdr pane layout`.
+    public static func isHidden(layout json: String) -> Bool {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        return ((obj?["result"] as? [String: Any])?["layout"] as? [String: Any])?["zoomed"] as? Bool ?? false
+    }
+
+    /// Unzooms the tab from the voice pane's side, bringing it into view.
+    public static func showArguments(voicePane: String) -> [String] { ["pane", "zoom", voicePane, "--off"] }
+
+    /// The pane you're in, from the voice pane's tab layout: the focused pane, unless that's the voice pane itself.
+    public static func userPane(layout json: String, voicePane: String) -> String? {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        let focused = ((obj?["result"] as? [String: Any])?["layout"] as? [String: Any])?["focused_pane_id"] as? String
+        return focused == voicePane ? nil : focused
+    }
+
+    /// Otherwise the pane to zoom over the voice pane to hide it: the one above it (where it opened below), else left.
+    public static let hideNeighbors = ["up", "left"]
+    public static func neighborArguments(voicePane: String, direction: String) -> [String] {
+        ["pane", "neighbor", "--pane", voicePane, "--direction", direction]
+    }
+    public static func neighbor(_ json: String) -> String? {
+        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        return ((obj?["result"] as? [String: Any])?["neighbor"] as? [String: Any])?["neighbor_pane_id"] as? String
+    }
 }
 
 extension SingleInstance {

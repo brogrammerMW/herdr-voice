@@ -77,7 +77,17 @@ final class Orb {
         let title: String
         let checked: Bool
         let enabled: Bool
+        /// Draw a separator line after this entry.
+        var separatorAfter = false
         let action: () -> Void
+
+        init(title: String, checked: Bool, enabled: Bool, separatorAfter: Bool = false, action: @escaping () -> Void) {
+            self.title = title
+            self.checked = checked
+            self.enabled = enabled
+            self.separatorAfter = separatorAfter
+            self.action = action
+        }
     }
 
     /// `onClick` for a plain click (mute); `menuChoices` is asked for fresh entries each time the right-click menu
@@ -348,6 +358,7 @@ final class Orb {
                 item.isEnabled = choice.enabled
                 item.representedObject = ActionBox(choice.action)
                 menu.addItem(item)
+                if choice.separatorAfter { menu.addItem(.separator()) }
             }
             if !choices.isEmpty { menu.addItem(.separator()) }
             let quit = NSMenuItem(title: "Quit herdr-voice", action: #selector(quitChosen), keyEquivalent: "")

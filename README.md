@@ -83,11 +83,13 @@ Then, in any Herdr pane:
 
 1. **Add your API key:** `herdr-voice setup` asks for it (hidden) and stores it in your macOS Keychain. Grok is the
    default; `herdr-voice setup openai` or `herdr-voice setup gemini` for the others.
-2. **Start the voice:** `herdr-voice`. It opens in a pane below the one you typed in, and your shell stays free.
-   Allow microphone access when macOS asks. Stop it with `herdr-voice stop` or by closing its pane.
+2. **Start the voice:** `herdr-voice`. It opens in a pane below the one you typed in, hidden behind it: your pane
+   is zoomed to fill the tab, and the orb shows what the voice is doing. Allow microphone access when macOS asks.
+   Stop it with `herdr-voice stop`. To see the transcript, right-click the orb → **Show voice pane**.
    `herdr-voice --provider gemini` starts it with another model; `herdr-voice --here` runs it in the current pane.
 3. **Use the orb:** **click** it to mute or unmute your mic (it turns grey while muted; you still hear the voice).
-   **Right-click** it for a menu to switch the AI model (**Grok**, **GPT** or **Gemini**) or **Quit herdr-voice**.
+   **Right-click** it for a menu to **Show voice pane** (or **Hide voice pane**), switch the AI model (**Grok**,
+   **GPT** or **Gemini**) or **Quit herdr-voice**.
    Switching keeps the conversation going with the new model. To change the voice itself (Rex, Eve, ...), set
    `HERDR_VOICE_VOICE` in the settings file below.
 
@@ -241,7 +243,7 @@ thing, the voice asks which one you mean instead of guessing.
 | Control | Action |
 |---|---|
 | `⌥⌘M`, or click the orb | Mute or unmute the mic, from any app. When disconnected, reconnects instead |
-| Right-click (or control-click) the orb | Menu: switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out), which carries the conversation over to the new model, or **Quit herdr-voice**, which closes the provider session and exits |
+| Right-click (or control-click) the orb | Menu: **Show voice pane** unzooms the tab so the voice's transcript is in view; **Hide voice pane** zooms the pane above it again; the model entries switch the AI model (**Grok**, **GPT**, **Gemini**; the current one is checked, models without an API key are greyed out), which carries the conversation over to the new model, or **Quit herdr-voice**, which closes the provider session and exits |
 | `Esc` while the voice is talking | Stop it and cancel the rest of the reply |
 | Talk over the voice | Stop it and listen to you (only when your mic actually heard you, so echo and noise don't cut it off) |
 | Say "stop", "quiet", "never mind", "that's enough" | Stop it without a reply |
@@ -301,6 +303,7 @@ an environment variable set some other way still wins.
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_DEBUG_EVENTS` | off | `1` logs every provider event except audio (resumption handles are masked), to diagnose a provider |
 | `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` and `run_in_pane` tools (see below) |
+| `HERDR_VOICE_START_HIDDEN` | on | `0` shows the voice pane when it starts, instead of zooming the pane you started it from over it |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
 | `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
 | `HERDR_VOICE_GATE_DEBUG` | off | `1` logs the speech gate: its noise floor, opening level and peaks every 5 s, and each open/close |
@@ -524,7 +527,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 147 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 149 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
