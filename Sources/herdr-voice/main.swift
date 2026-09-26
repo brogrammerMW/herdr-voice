@@ -23,7 +23,7 @@ if let dir = ProcessInfo.processInfo.environment["HERDR_PLUGIN_CONFIG_DIR"] {
 let env = ProcessInfo.processInfo.environment
 let args = CommandLine.arguments
 let providerName = args.firstIndex(of: "--provider").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
-    ?? env["HERDR_VOICE_PROVIDER"] ?? "grok"
+    ?? env["HERDR_VOICE_PROVIDER"] ?? Provider.defaultChoice(localIsBuilt: LocalRuntime.isBuilt(environment: env)).rawValue
 
 // One-shot commands.
 if args.count > 1 {
@@ -35,7 +35,7 @@ if args.count > 1 {
         print("""
         herdr-voice                    start the voice (in Herdr: in a pane below this one)
         herdr-voice --here             start it in this pane
-        herdr-voice --provider NAME    use local, grok, openai or gemini
+        herdr-voice --provider NAME    use local, grok, openai or gemini (default: local once set up, else grok)
         herdr-voice stop               stop the running voice
         herdr-voice setup [NAME]       store an API key in the Keychain
         herdr-voice install-command    put herdr-voice on your PATH (~/.local/bin)

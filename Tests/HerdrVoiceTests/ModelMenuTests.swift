@@ -39,3 +39,8 @@ import Testing
     #expect(Provider.gemini.voice(startedWith: .gemini, configured: "Puck") == "Puck")
     #expect(Provider.local.voice(startedWith: .local, configured: "af_bella") == "af_bella")
 }
+
+@Test func theDefaultProviderIsLocalOnceSetUpElseGrok() {
+    #expect(Provider.defaultChoice(localIsBuilt: true) == .local)
+    #expect(Provider.defaultChoice(localIsBuilt: false) == .grok)
+}
