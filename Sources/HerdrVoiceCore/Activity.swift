@@ -13,3 +13,22 @@ public enum Activity {
         return awaiting || generating || toolsRunning > 0 || busyAgents > 0
     }
 }
+
+/// The orb's colour: what the voice is doing right now.
+public enum Mood {
+    case muted, listening, speaking, working, offline
+}
+
+extension Activity {
+    /// Loading local models is progress, so it shows as working (amber), not offline (red); red is for a session
+    /// that should be up and isn't. Offline while muted or dormant is deliberate, so it doesn't show red either.
+    public static func mood(loading: Bool, disconnected: Bool, dormant: Bool, muted: Bool, speaking: Bool,
+                            agentsWorking: Bool, micQuiet: Bool) -> Mood {
+        if muted { return speaking ? .speaking : .muted }
+        if loading { return .working }
+        if disconnected && !dormant { return .offline }
+        if speaking { return .speaking }
+        if agentsWorking && micQuiet { return .working }
+        return .listening
+    }
+}

@@ -1,4 +1,5 @@
 import AppKit
+import HerdrVoiceCore
 import QuartzCore
 
 /// Floating orb. Normally pinned to the bottom-left of the terminal window showing Herdr (see `follow`);
@@ -6,29 +7,7 @@ import QuartzCore
 /// Inside, soft colour blobs drift on out-of-phase paths. Two voices drive it differently:
 /// the developer's mic pushes the blobs and glow outward, the assistant's speech glows from the core.
 final class Orb {
-    enum Mood {
-        case muted, listening, speaking, working, offline
-
-        var palette: [NSColor] {
-            switch self {
-            case .muted: [.systemGray, .darkGray, .lightGray]
-            case .listening: [.systemTeal, .systemBlue, .systemCyan]
-            case .speaking: [.systemPink, .systemPurple, .systemIndigo]
-            case .working: [.systemYellow, .systemOrange, .systemRed]
-            case .offline: [.systemRed, .black, .systemPink]
-            }
-        }
-
-        /// How lively the blobs are with no voice at all.
-        var idleSpeed: CGFloat {
-            switch self {
-            case .muted, .offline: 0.15
-            case .listening: 0.45
-            case .speaking: 0.6
-            case .working: 0.9
-            }
-        }
-    }
+    typealias Mood = HerdrVoiceCore.Mood
 
     /// Per-blob motion: two incommensurate frequencies per axis, so paths never visibly repeat.
     private struct Blob {
@@ -382,4 +361,26 @@ private final class FrameDriver: NSObject {
 private final class ActionBox: NSObject {
     let run: () -> Void
     init(_ run: @escaping () -> Void) { self.run = run }
+}
+
+extension Mood {
+    var palette: [NSColor] {
+        switch self {
+        case .muted: [.systemGray, .darkGray, .lightGray]
+        case .listening: [.systemTeal, .systemBlue, .systemCyan]
+        case .speaking: [.systemPink, .systemPurple, .systemIndigo]
+        case .working: [.systemYellow, .systemOrange, .systemRed]
+        case .offline: [.systemRed, .black, .systemPink]
+        }
+    }
+
+    /// How lively the blobs are with no voice at all.
+    var idleSpeed: CGFloat {
+        switch self {
+        case .muted, .offline: 0.15
+        case .listening: 0.45
+        case .speaking: 0.6
+        case .working: 0.9
+        }
+    }
 }

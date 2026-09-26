@@ -171,17 +171,6 @@ if provider.requiresAPIKey, provider.apiKey(environment: env) == nil, isatty(STD
     if !setupKey(for: provider) { exit(2) }
 }
 let localRuntime = LocalRuntime()
-var initialLocal: LocalRuntime.Ready?
-if provider == .local {
-    do {
-        log("◌ loading Local OpenLive WebGPU speech models")
-        initialLocal = try localRuntime.prepare(environment: env)
-        log("● \(initialLocal!.label) ready")
-    } catch {
-        FileHandle.standardError.write(Data("Local OpenLive failed: \(error.localizedDescription)\nNo cloud fallback was selected.\n".utf8))
-        exit(2)
-    }
-}
 guard provider == .local || provider.apiKey(environment: env) != nil else {
     FileHandle.standardError.write(Data("""
     no API key for \(provider.rawValue). Add one with:
@@ -202,9 +191,29 @@ if env["HERDR_VOICE_ECHO_CANCEL"] == "0" { log("echo cancellation off (HERDR_VOI
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let startedWith = provider
 let session = Realtime(provider: provider, key: key,
-                       voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]),
-                       request: initialLocal?.request)
+                       voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
 var localActivation = LocalActivation()
+
+/// Loads the local models off the main queue, so the orb shows the warm-up, then opens the session if Local
+/// is still the choice.
+func loadLocal(onFailure: @escaping (Error) -> Void) {
+    let generation = localActivation.begin()
+    DispatchQueue.global(qos: .userInitiated).async {
+        do {
+            let ready = try localRuntime.prepare(environment: env)
+            DispatchQueue.main.async {
+                guard localActivation.finish(generation, selected: session.provider) else { return }
+                log("● \(ready.label) ready")
+                session.completeProviderSwitch(key: "", request: ready.request)
+            }
+        } catch {
+            DispatchQueue.main.async {
+                guard localActivation.finish(generation, selected: session.provider) else { return }
+                onFailure(error)
+            }
+        }
+    }
+}
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
 /// "Show voice pane" while it's hidden behind the pane it opened next to, "Hide voice pane" while it's in view. Only when
 /// herdr-voice runs in a Herdr pane.
@@ -225,21 +234,8 @@ func modelChoices() -> [Orb.MenuChoice] {
             if entry.provider == .local {
                 // Stop the old cloud socket before model warmup, so choosing Local stops cloud mic egress immediately.
                 guard session.beginProviderSwitch(to: .local, voice: voice) else { return }
-                let generation = localActivation.begin()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    do {
-                        let ready = try localRuntime.prepare(environment: env)
-                        DispatchQueue.main.async {
-                            guard localActivation.accepts(generation, selected: session.provider) else { return }
-                            log("● \(ready.label) ready")
-                            session.completeProviderSwitch(key: "", request: ready.request)
-                        }
-                    } catch {
-                        DispatchQueue.main.async {
-                            guard localActivation.accepts(generation, selected: session.provider) else { return }
-                            log("✖ Local OpenLive failed: \(error.localizedDescription); still in Local mode with the mic offline")
-                        }
-                    }
+                loadLocal { error in
+                    log("✖ Local OpenLive failed: \(error.localizedDescription); still in Local mode with the mic offline")
                 }
                 return
             }
@@ -273,16 +269,13 @@ session.audio.onSpeakingChanged = { speaking in
 
 orb.run {
     let a = session.audio
-    let mood: Orb.Mood
-    // Offline while muted is deliberate (it reconnects when you unmute), so show muted, not an error.
-    if session.status == .disconnected && !session.muted && !session.dormant { mood = .offline }
-    else if a.isSpeaking { mood = .speaking }
-    else if session.muted { mood = .muted }
-    else if !session.busyAgents.isEmpty && a.micLevel < 0.02 { mood = .working }
-    else { mood = .listening }
+    let loading = localActivation.loading
+    let mood = Activity.mood(loading: loading, disconnected: session.status == .disconnected,
+                             dormant: session.dormant, muted: session.muted, speaking: a.isSpeaking,
+                             agentsWorking: !session.busyAgents.isEmpty, micQuiet: a.micLevel < 0.02)
     // Both directions at once: talking over the assistant shows your push and its core together.
     return Orb.Frame(mood: mood, mic: session.muted ? 0 : a.micLevel, voice: a.isSpeaking ? a.outLevel : 0,
-                     thinking: session.status != .disconnected && session.thinking)
+                     thinking: loading || (session.status != .disconnected && session.thinking))
 }
 
 do {
@@ -290,6 +283,13 @@ do {
 } catch {
     log("✖ audio: \(error.localizedDescription) — allow microphone access for your terminal in System Settings")
     exit(1)
+}
+if provider == .local {
+    log("◌ loading Local OpenLive WebGPU speech models")
+    loadLocal { error in
+        FileHandle.standardError.write(Data("Local OpenLive failed: \(error.localizedDescription)\nNo cloud fallback was selected.\n".utf8))
+        exit(2)
+    }
 }
 signal(SIGINT) { _ in exit(0) }
 app.run()
