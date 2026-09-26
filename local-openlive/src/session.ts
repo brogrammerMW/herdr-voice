@@ -67,6 +67,9 @@ export class BridgeSession {
   private responseGeneration = 0;
   private responseSequence = 0;
   private inputGeneration = 0;
+  /** Bumped by input.clear (mute): speech from before it must never reach a later turn. */
+  private clears = 0;
+  private lastUtterance?: { epoch: number; id: string };
   /** A transcript that trailed off mid-thought, waiting to be joined with what the user says next. */
   private held?: { audio: Float32Array; text: string; epoch: number; id: string; timer?: ReturnType<typeof setTimeout> };
 
@@ -83,6 +86,7 @@ export class BridgeSession {
       this.epoch = message.epoch;
       this.inputGeneration += 1;
       this.utterance = { id: utteranceID, epoch: message.epoch, chunks: [], bytes: 0 };
+      this.lastUtterance = { epoch: message.epoch, id: utteranceID };
       clearTimeout(this.held?.timer); // the user is continuing; this utterance's commit decides
       return;
     }
@@ -96,6 +100,7 @@ export class BridgeSession {
       if (!Number.isSafeInteger(message.epoch) || message.epoch < this.epoch) return;
       this.epoch = message.epoch;
       this.inputGeneration += 1;
+      this.clears += 1;
       this.cancel();
       this.utterance = undefined;
       clearTimeout(this.held?.timer);
@@ -147,6 +152,7 @@ export class BridgeSession {
   private async commit(): Promise<void> {
     const utterance = this.utterance!;
     const generation = this.inputGeneration;
+    const clears = this.clears;
     this.utterance = undefined;
     const audio16 = resampleInt16PCM(Buffer.concat(utterance.chunks), 24_000, 16_000);
     const held = this.held;
@@ -157,7 +163,14 @@ export class BridgeSession {
     }
     const audio = held ? concatAudio(held.audio, audio16) : audio16;
     const text = (await this.deps.transcribe(audio, utterance.epoch)).trim();
-    if (utterance.epoch !== this.epoch || generation !== this.inputGeneration) return;
+    if (clears !== this.clears) return;
+    if (utterance.epoch !== this.epoch || generation !== this.inputGeneration) {
+      // The gate reopened while this was transcribing: it's the start of the same sentence, so the newer
+      // segment's commit transcribes both together. Nothing newer still open means that commit already ran.
+      if (this.utterance) this.held = { audio, text, epoch: utterance.epoch, id: utterance.id };
+      else if (this.lastUtterance) this.hold({ audio, text, ...this.lastUtterance });
+      return;
+    }
     this.held = undefined;
     if (isJunk(text)) return;
     if (endsMidThought(text) && audio.length < MAX_HELD_SAMPLES) {

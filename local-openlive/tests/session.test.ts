@@ -308,6 +308,51 @@ describe("phantom microphone turns (#82)", () => {
     expect(heard(events)).toEqual(["Close the build pane and"]);
   });
 
+  it("joins a segment still being transcribed into the next one instead of dropping it", async () => {
+    let first!: (text: string) => void;
+    const lengths: number[] = [];
+    const { session, events } = harness({ transcribe: async (audio) => {
+      lengths.push(audio.length);
+      return lengths.length === 1 ? new Promise<string>((resolve) => { first = resolve; }) : "Open another worktree under herdr-voice.";
+    } });
+    await session.handle(setup());
+    const earlier = (async () => {
+      await session.handle({ type: "input.begin", epoch: 1, utterance_id: "a" });
+      for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 1, utterance_id: "a", audio });
+      await session.handle({ type: "input.commit", epoch: 1, utterance_id: "a" });
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await session.handle({ type: "input.begin", epoch: 2, utterance_id: "b" });
+    first("Open another worktree");
+    await earlier;
+    for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 2, utterance_id: "b", audio });
+    await session.handle({ type: "input.commit", epoch: 2, utterance_id: "b" });
+    expect(lengths[1]).toBeGreaterThan(lengths[0]! * 1.9);
+    expect(heard(events)).toEqual(["Open another worktree under herdr-voice."]);
+  });
+
+  it("does not carry a segment across a mute", async () => {
+    let first!: (text: string) => void;
+    const lengths: number[] = [];
+    const { session, events } = harness({ transcribe: async (audio) => {
+      lengths.push(audio.length);
+      return lengths.length === 1 ? new Promise<string>((resolve) => { first = resolve; }) : "Hello there.";
+    } });
+    await session.handle(setup());
+    const earlier = (async () => {
+      await session.handle({ type: "input.begin", epoch: 1, utterance_id: "a" });
+      for (const audio of packets(600)) await session.handle({ type: "input.append", epoch: 1, utterance_id: "a", audio });
+      await session.handle({ type: "input.commit", epoch: 1, utterance_id: "a" });
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await session.handle({ type: "input.clear", epoch: 2 });
+    first("secret");
+    await earlier;
+    await say(session, 3, "b");
+    expect(lengths[1]).toBe(lengths[0]);
+    expect(heard(events)).toEqual(["Hello there."]);
+  });
+
   it("drops a held turn when the mic is muted", async () => {
     vi.useFakeTimers();
     const { session, events } = harness({ transcribe: async () => "Close the build pane and" });

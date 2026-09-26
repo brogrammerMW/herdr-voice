@@ -162,3 +162,22 @@ private let quiet: Float = 0.0003, speech: Float = 0.05
     #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "nope"]) == EchoGuard.defaultRatio)
     #expect(EchoGuard.ratio(environment: ["HERDR_VOICE_LOCAL_ECHO_RATIO": "-1"]) == EchoGuard.defaultRatio)
 }
+
+// Live test: a long sentence raised the floor estimate to 0.04 and the local gate closed on the speaker mid-sentence.
+@Test func localGateKeepsTheFloorFromBeforeSpeechWhileOpen() {
+    var g = SpeechGate<Int>(policy: .local), i = 0
+    _ = feed(&g, 160, quiet, from: &i)
+    _ = feed(&g, 5, speech, from: &i)
+    #expect(g.isOpen)
+    // 4 s of steady talking, then 600 ms of softer words: still 30× the room's noise, but a fifth of the speech.
+    _ = feed(&g, 200, speech, from: &i)
+    _ = feed(&g, 30, speech / 5, from: &i)
+    #expect(g.isOpen)
+}
+
+@Test func localGateClosesAfterTheLongestUtteranceEvenIfNoiseStaysLoud() {
+    var g = SpeechGate<Int>(policy: .local), i = 0
+    _ = feed(&g, 160, quiet, from: &i)
+    _ = feed(&g, SpeechGate<Int>.maxHoldChunks + 10, speech, from: &i)
+    #expect(!g.isOpen)
+}
