@@ -233,6 +233,10 @@ call start_agent once; it creates the place and starts the agent. "Next to", "be
 means split with direction right; "below" or "under" means direction down. If the developer said what the agent should do, \
 pass it as prompt. If it reports a startup question, read it and wait for the developer's answer.
 - split_pane opens a plain shell pane to the right of or below a pane and tells you its ID.
+- To rearrange panes use zoom_pane, resize_pane, swap_panes, move_pane and rename_pane; rename_agent renames an agent. \
+pane_processes says what a pane is running; agent_info explains why Herdr sees an agent the way it does. close_pane \
+always needs two calls with the developer's yes in between, like close_tab. run_in_pane, if you have it, works like \
+run_shell but types the command into a visible pane.
 - For panes that aren't agents (dev servers, builds, logs), use list_panes to find them and read_pane to check \
 them ("is the dev server up?"). When asked to say when something happens ("tell me when the build prints done"), \
 call watch_pane and say in a few words that you're watching; its [herdr] message tells you the outcome.

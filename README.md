@@ -211,6 +211,12 @@ During the "speaking" state it plays a quiet synthetic voice through the real pl
 | "Make a worktree for fix login and start Claude in it" | New branch and worktree opened as a workspace, Claude Code started there (Codex if you say so) |
 | "Start Claude to the right of claude-2" / "open Codex below the dev server" | Splits that pane right or down and starts the agent in the new pane |
 | "Split the build pane down" | Opens a new shell pane below it (or to the right) |
+| "Zoom the dev server" / "make claude-2 wider" / "swap those two" | Zooms, resizes or swaps panes |
+| "Move the logs pane to its own tab" / "put it below claude-2" | Moves a pane into a new or existing tab, or next to another pane |
+| "Rename claude-2 to api-claude" / "call this pane server" | Renames an agent or a pane |
+| "What's running in the build pane?" | Names the programs running there (names only, never their arguments) |
+| "Why isn't that agent showing up?" | Explains how Herdr detects that agent |
+| "Close the build pane" | Asks you to confirm, then closes it after you say "yes"; never closes herdr-voice's own pane |
 | "Start Codex in a new tab of forge and have it add tests" | New tab, Codex started, and your instruction sent; you hear a summary when it's done |
 | "Is the dev server up?" | Finds the pane running it and summarizes its latest output |
 | "Tell me when the build prints done" | Watches that pane in the background and speaks up when the text appears (or after 10 minutes without it) |
@@ -288,7 +294,7 @@ an environment variable set some other way still wins.
 | `HERDR_VOICE_HOTKEY_KEYCODE` | `46` (M) | macOS virtual key code for the mute hotkey; modifiers stay `⌥⌘` |
 | `HERDR_VOICE_DEBUG_KEYS` | off | `1` logs when `Esc` is grabbed and released |
 | `HERDR_VOICE_DEBUG_EVENTS` | off | `1` logs every provider event except audio (resumption handles are masked), to diagnose a provider |
-| `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` tool (see below) |
+| `HERDR_VOICE_SHELL` | off | `1` gives the voice the `run_shell` and `run_in_pane` tools (see below) |
 | `HERDR_VOICE_ORB_PIN` | on | `0` keeps the orb in the screen corner instead of pinning it to the Herdr window |
 | `HERDR_VOICE_STREAM` | gated | `always` streams the mic continuously instead of only while you talk (costs more) |
 | `HERDR_VOICE_GATE_DEBUG` | off | `1` logs the speech gate: its noise floor, opening level and peaks every 5 s, and each open/close |
@@ -397,6 +403,12 @@ herdr-voice doesn't patch or extend Herdr itself. It drives Herdr through its pu
 | `list_worktrees` | `herdr worktree list --workspace <id>` |
 | `create_worktree` / `open_worktree` | `herdr worktree create --workspace <id> --branch <name> [--base <ref>]` / `herdr worktree open --workspace <id> --branch <name>` |
 | `start_agent` | `herdr pane split` (with `split` and `direction`), `herdr worktree create`, `herdr tab create` or `herdr workspace create`, then `herdr agent start <name> --kind claude\|codex --pane <new pane>`, then `herdr agent prompt` if you gave an instruction |
+| `zoom_pane` / `resize_pane` / `swap_panes` | `herdr pane zoom --toggle\|--on\|--off` / `herdr pane resize --direction` / `herdr pane swap` |
+| `move_pane` | `herdr pane move <pane> --new-tab`, or `--tab <tab> --split right\|down [--target-pane]` |
+| `rename_pane` / `rename_agent` | `herdr pane rename` / `herdr agent rename` |
+| `pane_processes` / `agent_info` | `herdr pane process-info` (program names only) / `herdr agent explain` |
+| `close_pane` | `herdr pane close`, after your spoken yes |
+| `run_in_pane` (opt-in) | `herdr pane run <pane> <command>`, after your spoken yes; needs `HERDR_VOICE_SHELL=1` like `run_shell` |
 | `split_pane` | `herdr pane split <pane> --direction right\|down --no-focus [--cwd]`; returns the new pane's ID |
 | `list_panes` / `read_pane` | `herdr api snapshot` / `herdr pane read <pane> --source recent` |
 | `watch_pane` | `herdr pane wait-output <pane> --regex <text> --lines 15 --timeout <ms>` in the background |
@@ -506,7 +518,7 @@ Want the details? Ask it to show you the agent's pane ("show me claude-2") and r
 
 ```bash
 swift build          # debug build
-swift test           # 139 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
+swift test           # 146 tests: plugin config and single-instance lock, starting agents, pane reading and watching, workspace/tab/worktree management, key setup, events, wire protocols (golden OpenAI/Grok messages, Gemini Live), Herdr tools, focus, confirmations, injection gates, shell, speech policy, activity, window pinning, reconnect, keychain, speech gate, reply scheduling, report condensing, stop phrases, model menu
 swift build -c release
 herdr plugin link "$PWD"   # try your working copy as the plugin (link doesn't build: run swift build -c release first)
 ```
