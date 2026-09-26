@@ -17,7 +17,7 @@ func nonKeysAreRefused(raw: String) { #expect(Keychain.cleanKey(raw) == nil) }
 }
 
 @Test func eachProviderHasAKeyPageAndPrefix() {
-    for p in Provider.allCases {
+    for p in Provider.allCases where p.requiresAPIKey {
         #expect(p.keyPage.hasPrefix("https://"))
         #expect(!p.keyPrefix.isEmpty)
     }

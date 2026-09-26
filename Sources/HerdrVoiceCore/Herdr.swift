@@ -10,8 +10,14 @@ public enum HerdrTools {
         ["type": "boolean", "description": "true only on the second call, after the developer said yes"]
 
     /// Tools offered to the voice model. `run_shell` is only offered when HERDR_VOICE_SHELL=1.
-    public static var schemas: [[String: Any]] { herdrSchemas + manageSchemas + [startAgentSchema] + paneSchemas + [splitPaneSchema] + paneControlSchemas
-        + (shellEnabled ? [shellSchema, runInPaneSchema] : []) }
+    public static var schemas: [[String: Any]] { schemas(includeShell: shellEnabled) }
+
+    public static func schemas(includeShell: Bool) -> [[String: Any]] {
+        // Typed groups joined, not one long `+` chain: CI's compiler timed out type-checking that.
+        let groups: [[[String: Any]]] = [herdrSchemas, manageSchemas, [startAgentSchema], paneSchemas, [splitPaneSchema],
+                                         paneControlSchemas, includeShell ? [shellSchema, runInPaneSchema] : []]
+        return Array(groups.joined())
+    }
 
     static let herdrSchemas: [[String: Any]] = [
         fn("list_agents", "List coding agents running in Herdr panes with name, status, cwd and title.", [:], []),

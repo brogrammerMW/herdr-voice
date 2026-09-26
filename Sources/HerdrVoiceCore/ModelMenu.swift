@@ -10,7 +10,7 @@ public enum ModelMenu {
 
     public static func entries(current: Provider, hasKey: (Provider) -> Bool) -> [Entry] {
         Provider.menuOrder.map { provider in
-            let available = hasKey(provider)
+            let available = !provider.requiresAPIKey || hasKey(provider)
             return Entry(provider: provider, title: provider.menuTitle + (available ? "" : " (no key)"),
                          checked: provider == current, enabled: available)
         }

@@ -1,10 +1,11 @@
 import Foundation
 
 public enum Provider: String, CaseIterable {
-    case openai, grok, gemini
+    case local, openai, grok, gemini
 
     public var url: URL {
         switch self {
+        case .local: URL(string: "ws://127.0.0.1:1")!
         case .openai: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1")!
         case .grok: URL(string: "wss://api.x.ai/v1/realtime?model=grok-voice-latest")!
         case .gemini: URL(string: GeminiLiveWire.endpoint)!
@@ -12,9 +13,10 @@ public enum Provider: String, CaseIterable {
     }
 
     /// As listed in the orb's menu, in this order.
-    public static let menuOrder: [Provider] = [.grok, .openai, .gemini]
+    public static let menuOrder: [Provider] = [.local, .grok, .openai, .gemini]
     public var menuTitle: String {
         switch self {
+        case .local: "Local OpenLive"
         case .grok: "Grok"
         case .openai: "GPT"
         case .gemini: "Gemini"
@@ -30,6 +32,7 @@ public enum Provider: String, CaseIterable {
 
     public var keyEnv: String {
         switch self {
+        case .local: "HERDR_LOCAL_OPENLIVE_TOKEN"
         case .openai: "OPENAI_API_KEY"
         case .grok: "XAI_API_KEY"
         case .gemini: "GEMINI_API_KEY"
@@ -39,6 +42,7 @@ public enum Provider: String, CaseIterable {
     /// Where to create a key, shown by `herdr-voice setup`.
     public var keyPage: String {
         switch self {
+        case .local: ""
         case .openai: "https://platform.openai.com/api-keys"
         case .grok: "https://console.x.ai"
         case .gemini: "https://aistudio.google.com/apikey"
@@ -48,6 +52,7 @@ public enum Provider: String, CaseIterable {
     /// How this provider's keys start, to catch a key pasted for the wrong provider.
     public var keyPrefix: String {
         switch self {
+        case .local: ""
         case .openai: "sk-"
         case .grok: "xai-"
         case .gemini: "AIza"
@@ -58,6 +63,10 @@ public enum Provider: String, CaseIterable {
     /// `key` query parameter, so this URL must never be logged (nothing in herdr-voice logs URLs).
     public func request(key: String) -> URLRequest {
         switch self {
+        case .local:
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            return request
         case .openai, .grok:
             var request = URLRequest(url: url)
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -72,6 +81,7 @@ public enum Provider: String, CaseIterable {
     /// The wire protocol for one connection. OpenAI and xAI share the OpenAI Realtime protocol.
     public func makeWire(environment: [String: String] = ProcessInfo.processInfo.environment) -> Wire {
         switch self {
+        case .local: LocalWire()
         case .openai, .grok: OpenAIRealtimeWire(provider: self)
         case .gemini: GeminiLiveWire(model: environment["HERDR_VOICE_GEMINI_MODEL"] ?? GeminiLiveWire.defaultModel)
         }
@@ -86,6 +96,7 @@ public enum Provider: String, CaseIterable {
     /// the environment variable. The value is never logged or printed; callers report only where it came from.
     public func apiKey(environment: [String: String],
                        keychain: (String) -> String? = { Keychain.password(service: $0) }) -> (value: String, source: KeySource)? {
+        guard requiresAPIKey else { return nil }
         if let value = keychain(keyEnv), !value.isEmpty { return (value, .keychain) }
         if let value = environment[keyEnv]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
             return (value, .environment)
@@ -95,6 +106,7 @@ public enum Provider: String, CaseIterable {
 
     public var defaultVoice: String {
         switch self {
+        case .local: "af_heart"
         case .openai: "marin"
         case .grok: "eve"
         case .gemini: "Kore"
@@ -107,6 +119,8 @@ public enum Provider: String, CaseIterable {
         let pcm: [String: Any] = ["type": "audio/pcm", "rate": 24000]
         var tools = HerdrTools.schemas
         switch self {
+        case .local:
+            return LocalWire.sessionUpdate(instructions: instructions, voice: voice)
         case .openai:
             return ["type": "session.update", "session": [
                 "type": "realtime",
@@ -136,6 +150,8 @@ public enum Provider: String, CaseIterable {
             return GeminiLiveWire().setupMessage(instructions: instructions, voice: voice, resumeHandle: nil)
         }
     }
+
+    public var requiresAPIKey: Bool { self != .local }
 }
 
 /// Reads generic passwords from the login Keychain.

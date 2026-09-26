@@ -1,0 +1,7 @@
+Herdr Local OpenLive reuses selected source from Yashwanth Reddy Katipally's
+OpenLive repository at commit 849173cd1c8c17a95d600b17b428c301722bf5df.
+OpenLive is licensed under the MIT License. The exact upstream license is copied
+to dist/OPENLIVE-LICENSE during each verified build.
+
+The runtime executes OpenLive's models.worker.ts directly in a sandboxed hidden
+Electron renderer and uses its provider-neutral streamProvider implementation.

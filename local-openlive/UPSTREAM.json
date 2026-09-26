@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/katipally/openlive.git",
+  "commit": "849173cd1c8c17a95d600b17b428c301722bf5df",
+  "license": "MIT",
+  "files": [
+    "apps/web/src/lib/live/models.worker.ts",
+    "apps/web/src/lib/live/supertonic.ts",
+    "apps/web/src/lib/live/voiceText.ts",
+    "packages/harness/src"
+  ]
+}

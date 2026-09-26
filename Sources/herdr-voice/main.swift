@@ -35,7 +35,7 @@ if args.count > 1 {
         print("""
         herdr-voice                    start the voice (in Herdr: in a pane below this one)
         herdr-voice --here             start it in this pane
-        herdr-voice --provider NAME    use grok, openai or gemini
+        herdr-voice --provider NAME    use local, grok, openai or gemini
         herdr-voice stop               stop the running voice
         herdr-voice setup [NAME]       store an API key in the Keychain
         herdr-voice install-command    put herdr-voice on your PATH (~/.local/bin)
@@ -48,12 +48,31 @@ if args.count > 1 {
     }
 }
 
+if args.count > 2, args[1] == "local", args[2] == "schemas" {
+    let manifest = HerdrTools.toolManifest
+    let object: [String: Any] = [
+        "protocol_version": 1,
+        "instructions": voiceInstructions,
+        "voice": env["HERDR_VOICE_VOICE"] ?? Provider.local.defaultVoice,
+        "tools": HerdrTools.schemas,
+        "tool_manifest": ["profile": manifest.profile.name, "count": manifest.profile.count,
+                          "names": manifest.names, "digest": manifest.profile.digest],
+    ]
+    let data = try! JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    print(String(decoding: data, as: UTF8.self))
+    exit(0)
+}
+
 // herdr-voice setup [grok|openai|gemini]: store an API key, then exit.
 if args.count > 1, args[1] == "setup" {
     let name = args.count > 2 ? args[2] : providerName
     guard let provider = Provider(rawValue: name) else {
-        print("unknown provider \(name); use grok, openai or gemini")
+        print("unknown provider \(name); use local, grok, openai or gemini")
         exit(2)
+    }
+    guard provider.requiresAPIKey else {
+        print("Local OpenLive is keyless; run scripts/local-openlive-setup instead.")
+        exit(0)
     }
     exit(setupKey(for: provider) ? 0 : 1)
 }
@@ -120,7 +139,7 @@ if args.contains("--orb-demo") {
 }
 
 guard let provider = Provider(rawValue: providerName) else {
-    FileHandle.standardError.write(Data("unknown provider \(providerName); use grok, openai or gemini\n".utf8))
+    FileHandle.standardError.write(Data("unknown provider \(providerName); use local, grok, openai or gemini\n".utf8))
     exit(2)
 }
 // In Herdr, a plain `herdr-voice` opens the voice in its own pane below and gives the shell back.
@@ -147,11 +166,23 @@ if Launch.hidesOnStart(environment: env), let me = env["HERDR_PANE_ID"] {
 }
 
 // No key yet: in a terminal, ask for it right away (first run); otherwise say how to add one.
-if provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
+if provider.requiresAPIKey, provider.apiKey(environment: env) == nil, isatty(STDIN_FILENO) == 1 {
     print("No \(provider.menuTitle) API key yet.")
     if !setupKey(for: provider) { exit(2) }
 }
-guard let apiKey = provider.apiKey(environment: env) else {
+let localRuntime = LocalRuntime()
+var initialLocal: LocalRuntime.Ready?
+if provider == .local {
+    do {
+        log("◌ loading Local OpenLive WebGPU speech models")
+        initialLocal = try localRuntime.prepare(environment: env)
+        log("● \(initialLocal!.label) ready")
+    } catch {
+        FileHandle.standardError.write(Data("Local OpenLive failed: \(error.localizedDescription)\nNo cloud fallback was selected.\n".utf8))
+        exit(2)
+    }
+}
+guard provider == .local || provider.apiKey(environment: env) != nil else {
     FileHandle.standardError.write(Data("""
     no API key for \(provider.rawValue). Add one with:
         herdr-voice setup \(provider.rawValue)
@@ -160,8 +191,9 @@ guard let apiKey = provider.apiKey(environment: env) else {
     """.utf8))
     exit(2)
 }
-let key = apiKey.value
-log("🔑 \(provider.keyEnv) from the \(apiKey.source.rawValue)") // where it came from, never the value
+let apiKey = provider.apiKey(environment: env)
+let key = apiKey?.value ?? ""
+if let apiKey { log("🔑 \(provider.keyEnv) from the \(apiKey.source.rawValue)") } // where it came from, never the value
 if env["HERDR_ENV"] != "1" {
     log("⚠ not inside a Herdr pane; herdr commands will target the focused session and close tools are off")
 }
@@ -170,7 +202,9 @@ if env["HERDR_VOICE_ECHO_CANCEL"] == "0" { log("echo cancellation off (HERDR_VOI
 if HerdrTools.shellEnabled { log("⚠ run_shell is enabled: every command still needs your spoken yes") }
 let startedWith = provider
 let session = Realtime(provider: provider, key: key,
-                       voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
+                       voice: provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]),
+                       request: initialLocal?.request)
+var localActivation = LocalActivation()
 /// The orb's right-click menu: one entry per AI model, the current one checked, ones without a key greyed out.
 /// "Show voice pane" while it's hidden behind the pane it opened next to, "Hide voice pane" while it's in view. Only when
 /// herdr-voice runs in a Herdr pane.
@@ -187,14 +221,38 @@ func voicePaneChoice() -> Orb.MenuChoice? {
 func modelChoices() -> [Orb.MenuChoice] {
     (voicePaneChoice().map { [$0] } ?? []) + ModelMenu.entries(current: session.provider, hasKey: { $0.apiKey(environment: env) != nil }).map { entry in
         Orb.MenuChoice(title: entry.title, checked: entry.checked, enabled: entry.enabled) {
+            let voice = entry.provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"])
+            if entry.provider == .local {
+                // Stop the old cloud socket before model warmup, so choosing Local stops cloud mic egress immediately.
+                guard session.beginProviderSwitch(to: .local, voice: voice) else { return }
+                let generation = localActivation.begin()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let ready = try localRuntime.prepare(environment: env)
+                        DispatchQueue.main.async {
+                            guard localActivation.accepts(generation, selected: session.provider) else { return }
+                            log("● \(ready.label) ready")
+                            session.completeProviderSwitch(key: "", request: ready.request)
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            guard localActivation.accepts(generation, selected: session.provider) else { return }
+                            log("✖ Local OpenLive failed: \(error.localizedDescription); still in Local mode with the mic offline")
+                        }
+                    }
+                }
+                return
+            }
             guard let found = entry.provider.apiKey(environment: env) else { return }
-            session.switchProvider(to: entry.provider, key: found.value,
-                                   voice: entry.provider.voice(startedWith: startedWith, configured: env["HERDR_VOICE_VOICE"]))
+            localActivation.invalidate()
+            localRuntime.stop()
+            session.switchProvider(to: entry.provider, key: found.value, voice: voice)
         }
     }
 }
 let orb = Orb(onClick: { session.toggleMute() }, menuChoices: modelChoices, onQuit: {
     session.shutdown()
+    localRuntime.stop()
     // A moment for the WebSocket close frame to go out.
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
 })

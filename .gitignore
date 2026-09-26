@@ -2,3 +2,8 @@
 .swiftpm/
 .DS_Store
 .env
+local-openlive/node_modules/
+local-openlive/dist/
+local-openlive/vendor/
+local-openlive/.local-model-inventory.json
+bench-results/

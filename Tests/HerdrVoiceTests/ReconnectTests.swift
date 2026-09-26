@@ -5,6 +5,15 @@ import Testing
     #expect(Reconnect.delay(reason: .sessionEnded, attempt: 0, muted: false) == 0)
 }
 
+@Test func recapTruncatesTheMatchingPlaybackItem() {
+    var recap = Recap()
+    recap.add("voice", "first answer", itemID: "first")
+    recap.add("you", "next question")
+    recap.add("voice", "second answer", itemID: "second")
+    recap.replace(itemID: "first", speaker: "voice", with: "first")
+    #expect(recap.lines == ["voice: first", "you: next question", "voice: second answer"])
+}
+
 @Test func dropsBackOffUpToThirtySecondsThenGiveUp() {
     let delays = (0..<Reconnect.maxAttempts).map { Reconnect.delay(reason: .dropped, attempt: $0, muted: false) }
     #expect(delays == [1, 2, 4, 8, 16, 30, 30, 30])

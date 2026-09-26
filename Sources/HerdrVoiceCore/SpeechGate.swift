@@ -14,12 +14,21 @@
 ///   `hangoverChunks` of quiet (the silence the provider needs to see the turn end) and while the provider says a
 ///   turn is still in progress (`holdOpen`), up to `maxHoldChunks`.
 public struct SpeechGate<Chunk> {
+    public struct Policy: Equatable, Sendable {
+        public let hangoverChunks: Int
+        public let honorsProviderHold: Bool
+
+        public static var cloud: Policy { Policy(hangoverChunks: SpeechGate.hangoverChunks, honorsProviderHold: true) }
+        public static var local: Policy { Policy(hangoverChunks: SpeechGate.localHangoverChunks, honorsProviderHold: false) }
+    }
+
     public static var minThreshold: Float { 0.002 }
     public static var openRatio: Float { 5 }       // ≈ +14 dB over the noise floor to open
     public static var holdRatio: Float { 2.5 }     // ≈ +8 dB to stay open
     public static var onsetChunks: Int { 3 }       // 60 ms
     public static var preRollChunks: Int { 15 }    // 300 ms
     public static var hangoverChunks: Int { 40 }   // 800 ms
+    public static var localHangoverChunks: Int { 8 } // 160 ms, measured separately from cloud server VAD
     public static var maxHoldChunks: Int { 400 }   // 8 s
     public static var floorWindowChunks: Int { 150 } // 3 s
     /// Audio needed before the first opening, so a hissy mic can't trigger it before its floor is known.
@@ -28,6 +37,7 @@ public struct SpeechGate<Chunk> {
     public private(set) var isOpen = false
     /// Fixed opening level instead of the adaptive one (HERDR_VOICE_GATE_THRESHOLD).
     public var overrideThreshold: Float?
+    public var policy: Policy
     private var recent: [Float] = []
     private var recentIndex = 0
     private var loudRun = 0
@@ -36,8 +46,9 @@ public struct SpeechGate<Chunk> {
     private var holdLoudRun = 0
     private var preRoll: [Chunk] = []
 
-    public init(overrideThreshold: Float? = nil) {
+    public init(overrideThreshold: Float? = nil, policy: Policy = .cloud) {
         self.overrideThreshold = overrideThreshold
+        self.policy = policy
     }
 
     /// This mic's noise, whatever its gain or hiss: the 20th percentile of the last 3 s.
@@ -61,8 +72,8 @@ public struct SpeechGate<Chunk> {
             // end-of-speech countdown; two loud chunks in a row do.
             holdLoudRun = level > hold ? holdLoudRun + 1 : 0
             quietRun = holdLoudRun >= 2 ? 0 : quietRun + 1
-            let providerHolding = holdOpen && quietRun < Self.maxHoldChunks
-            if quietRun >= Self.hangoverChunks && !providerHolding {
+            let providerHolding = policy.honorsProviderHold && holdOpen && quietRun < Self.maxHoldChunks
+            if quietRun >= policy.hangoverChunks && !providerHolding {
                 isOpen = false
                 loudRun = 0
                 preRoll.removeAll()

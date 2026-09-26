@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+runs=${1:-5}
+mkdir -p "${repo_root}/bench-results"
+: > "${repo_root}/bench-results/local-openlive.jsonl"
+i=1
+while [ "${i}" -le "${runs}" ]; do
+  "${repo_root}/scripts/local-openlive-demo" --output "${repo_root}/bench-results/local-openlive-${i}.wav" >> "${repo_root}/bench-results/local-openlive.jsonl"
+  i=$((i + 1))
+done
+printf '%s\n' "Raw proxy timings: ${repo_root}/bench-results/local-openlive.jsonl"

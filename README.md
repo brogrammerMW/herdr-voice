@@ -5,9 +5,9 @@ I really like ChatGPT's voice agent and decided to create a version that would r
 
 **Talk to the coding agents in your [Herdr](https://herdr.dev) panes, and hear them talk back.**
 
-herdr-voice is a macOS plugin for Herdr. You speak; a realtime voice model (xAI Grok, OpenAI or Google Gemini) understands
-you, hands the real work to the Claude Code or Codex agent running in a Herdr pane, and tells you out loud when that
-agent is done or needs your approval. A glowing orb in the corner of your screen shows who is talking.
+herdr-voice is a macOS plugin for Herdr. Local OpenLive or a realtime cloud model from xAI, OpenAI, or Google
+understands your speech. It hands the work to the Claude Code or Codex agent in a Herdr pane and tells you when the
+agent finishes or needs approval. A glowing orb in the corner of your screen shows who is talking.
 
 Watch the herdr-voice demo video below:
 
@@ -55,6 +55,9 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 - **Stop it mid-sentence.** Press `Esc` while it is talking, or just say "stop".
 - **Choice of provider and voice.** Grok (default), OpenAI or Gemini Live, and any of their voices (Eve, Rex, Ara,
   Sal, Leo, or a custom cloned voice on Grok). Switch models on the fly from the orb's right-click menu.
+- **Local OpenLive mode.** The same native mic, orb, confirmation gate, watches, recap, and 30 or 32 Swift tools can use
+  pinned OpenLive WebGPU Whisper and Kokoro speech with loopback Ollama Qwen 3.5. Local speech has no cloud-audio fees and
+  never falls back to cloud or CPU. See [Local OpenLive](docs/local-openlive.md).
 - **Cheap to leave running.** Only your speech is streamed (silence never leaves the Mac), quiet sessions close
   themselves, and dropped connections reconnect on their own (see [Cost](#cost)).
 - **Safe by default.** Anything that approves, sends on its own initiative, or destroys (approving an agent's prompt,
@@ -68,7 +71,26 @@ voice: Done. 42 tests pass; it fixed a null check in the login handler.
 | macOS | 14 Sonoma or later (developed on macOS 26) |
 | Swift | 5.10 or later: Xcode, or the Xcode Command Line Tools (`xcode-select --install`) |
 | Herdr | 0.9.0 or later |
-| API key | At least one of: an [xAI](https://console.x.ai) key (`XAI_API_KEY`), an [OpenAI](https://platform.openai.com) key (`OPENAI_API_KEY`), or a [Google AI Studio](https://aistudio.google.com) key (`GEMINI_API_KEY`) |
+| Provider | Local OpenLive with WebGPU and Ollama, or an xAI, OpenAI, or Google API key |
+
+## Local OpenLive quick start
+
+Local mode is an explicit source-checkout installation because it includes Electron and large browser model assets:
+
+```bash
+./scripts/local-openlive-setup
+swift build -c release
+./scripts/local-openlive-start
+```
+
+`local-openlive-setup` verifies the pinned OpenLive commit, installs exact locked dependencies, downloads the fp32
+Whisper tiny.en and Kokoro assets through the actual OpenLive worker and records a private cache inventory. It then
+proves a strict-offline speech restart with real STT and TTS calls. The script also installs `qwen3.5:4b` through Ollama
+when needed and verifies the exact model with a bounded local inference call. The app connects to Ollama only on loopback.
+The worker currently uses Electron's persistent browser cache. The source and npm dependencies are pinned, while the
+model cache is inventoried and hashed at setup rather than checked into this repository. Full operating instructions,
+hybrid keyed-brain settings, failure behavior, demos, tool examples and benchmark limits are in
+[docs/local-openlive.md](docs/local-openlive.md).
 
 ## Install as a Herdr plugin (recommended)
 
@@ -88,8 +110,8 @@ Then, in any Herdr pane:
    Stop it with `herdr-voice stop`. To see the transcript, right-click the orb → **Show voice pane**.
    `herdr-voice --provider gemini` starts it with another model; `herdr-voice --here` runs it in the current pane.
 3. **Use the orb:** **click** it to mute or unmute your mic (it turns grey while muted; you still hear the voice).
-   **Right-click** it for a menu to **Show voice pane** (or **Hide voice pane**), switch the AI model (**Grok**,
-   **GPT** or **Gemini**) or **Quit herdr-voice**.
+   **Right-click** it for a menu to **Show voice pane** (or **Hide voice pane**), switch the AI model (**Local OpenLive**,
+   **Grok**, **GPT** or **Gemini**) or **Quit herdr-voice**.
    Switching keeps the conversation going with the new model. To change the voice itself (Rex, Eve, ...), set
    `HERDR_VOICE_VOICE` in the settings file below.
 
@@ -293,7 +315,7 @@ an environment variable set some other way still wins.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `grok`, `openai` or `gemini` |
+| `HERDR_VOICE_PROVIDER` or `--provider` | `grok` | `local`, `grok`, `openai` or `gemini` |
 | `XAI_API_KEY` | | Grok key, if it isn't in the Keychain (see [API keys](#api-keys)) |
 | `OPENAI_API_KEY` | | OpenAI key, if it isn't in the Keychain |
 | `GEMINI_API_KEY` | | Gemini key, if it isn't in the Keychain |

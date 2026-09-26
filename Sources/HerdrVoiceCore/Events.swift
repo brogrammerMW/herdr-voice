@@ -2,14 +2,18 @@ import Foundation
 
 /// Server events we act on. Everything else decodes to `.ignored`.
 public enum ServerEvent: Equatable {
+    case sessionReady
     case audioDelta(itemID: String, base64: String)
     case assistantTranscript(String)
+    case assistantTranscriptItem(itemID: String, text: String)
+    case assistantTranscriptTruncated(itemID: String, text: String)
     case assistantTranscriptDelta(String)
     case userTranscript(String)
     case speechStarted
     case speechStopped
     case responseCreated
     case functionCall(callID: String, name: String, arguments: String)
+    case localFunctionCall(epoch: Int, callID: String, name: String, arguments: String)
     case responseDone
     /// The provider will close this connection soon (Gemini `goAway`).
     case sessionEnding

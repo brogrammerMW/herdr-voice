@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "${repo_root}/local-openlive"
+# Checked here: version managers pick Node from local-openlive/package.json engines.
+test "$(node --version)" = "v22.22.3" || { echo "Node 22.22.3 is required" >&2; exit 1; }
+test "$(pnpm --version)" = "11.5.2" || { echo "pnpm 11.5.2 is required" >&2; exit 1; }
+pnpm build
+pnpm check
+pnpm test
+node scripts/check-runtime.mjs

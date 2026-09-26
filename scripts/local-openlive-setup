@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+"${repo_root}/scripts/local-openlive-source"
+cd "${repo_root}/local-openlive"
+# Checked here: version managers pick Node from local-openlive/package.json engines.
+test "$(node --version)" = "v22.22.3" || { echo "Node 22.22.3 is required" >&2; exit 1; }
+test "$(pnpm --version)" = "11.5.2" || { echo "pnpm 11.5.2 is required" >&2; exit 1; }
+command -v ollama >/dev/null 2>&1 || { echo "Ollama is required for the default local brain" >&2; exit 1; }
+ollama show qwen3.5:4b >/dev/null 2>&1 || ollama pull qwen3.5:4b
+pnpm install --frozen-lockfile
+pnpm build
+node scripts/setup-models.mjs
+node scripts/check-runtime.mjs

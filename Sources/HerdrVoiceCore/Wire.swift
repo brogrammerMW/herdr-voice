@@ -5,6 +5,8 @@ import Foundation
 public enum WireCommand {
     /// The first message on a connection. `resumeHandle` resumes a previous session where supported.
     case setup(instructions: String, voice: String, resumeHandle: String?)
+    /// A locally verified microphone onset. Cloud providers continue to use server VAD and ignore this command.
+    case inputStarted(utteranceID: String)
     /// 20 ms of mic audio, base64 PCM16 24 kHz mono.
     case appendAudio(String)
     /// Muting: drop what the provider buffered of your speech.
@@ -28,11 +30,14 @@ public struct ToolOutput: Equatable {
     public let callID: String
     public let name: String
     public let output: String
+    /// Local turn identity. Cloud wires ignore it; LocalWire keeps late results bound to their original call.
+    public let epoch: Int?
 
-    public init(callID: String, name: String, output: String) {
+    public init(callID: String, name: String, output: String, epoch: Int? = nil) {
         self.callID = callID
         self.name = name
         self.output = output
+        self.epoch = epoch
     }
 }
 

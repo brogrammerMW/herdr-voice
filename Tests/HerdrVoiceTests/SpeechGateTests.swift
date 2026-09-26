@@ -114,6 +114,15 @@ private let quiet: Float = 0.0003, speech: Float = 0.05
     #expect(!g.isOpen)
 }
 
+@Test func localGateIgnoresProviderHoldAndClosesAfterShortHangover() {
+    var g = SpeechGate<Int>(policy: .local), i = 0
+    _ = feed(&g, 50, quiet, from: &i)
+    _ = feed(&g, 20, speech, from: &i)
+    #expect(g.isOpen)
+    _ = feed(&g, SpeechGate<Int>.localHangoverChunks, quiet, from: &i, hold: true)
+    #expect(!g.isOpen)
+}
+
 @Test func nothingOpensBeforeWarmup() {
     var g = SpeechGate<Int>(), i = 0
     #expect(feed(&g, SpeechGate<Int>.warmupChunks - 1, speech, from: &i).isEmpty)
