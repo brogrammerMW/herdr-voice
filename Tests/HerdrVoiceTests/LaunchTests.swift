@@ -22,7 +22,7 @@ import Testing
     let path = FileManager.default.temporaryDirectory.appendingPathComponent("hv-run-\(UUID().uuidString)").path
     defer { unlink(path) }
     #expect(SingleInstance.runningPID(path: path) == nil)
-    #expect(SingleInstance.runningPID(path: path) == nil) // the check itself didn't leave it held
+    #expect(lockFreesSoon(path)) // the check itself didn't leave it held
     let held = SingleInstance.acquire(path: path)
     #expect(SingleInstance.runningPID(path: path) == getpid())
     close(held.fd)

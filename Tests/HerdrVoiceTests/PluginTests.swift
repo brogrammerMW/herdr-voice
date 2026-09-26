@@ -30,7 +30,17 @@ import Testing
     let second = SingleInstance.acquire(path: path)
     #expect(second.holder == getpid())
     close(first.fd) // released with the process in real use
-    #expect(SingleInstance.acquire(path: path).holder == nil)
+    #expect(lockFreesSoon(path))
+}
+
+/// Other tests spawn processes in parallel, and a child mid-posix_spawn shares every open fd until exec drops the
+/// O_CLOEXEC ones, so a just-released flock can read as held for about a millisecond. Give it a moment.
+func lockFreesSoon(_ path: String) -> Bool {
+    for _ in 0..<100 {
+        if SingleInstance.runningPID(path: path) == nil { return true }
+        usleep(10_000)
+    }
+    return false
 }
 
 @Test func herdrIsTheRunningBinaryWhenHerdrSaysWhereItIs() {
